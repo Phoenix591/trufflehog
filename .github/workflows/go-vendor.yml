@@ -2,7 +2,11 @@
 # then compress and release the resulting vendor tarball
 # see https://wiki.gentoo.org/wiki/Writing_go_Ebuilds
 
-name: Go
+name: Create Go Vendor Tarball
+env:
+  TAR_REPRO_OPTS: --mtime=2023-01-01  --sort=name  --owner=0 --group=0 --numeric-owner
+  TAR_NAME: ${{ github.event.repository.name }}-${{ github.ref_name }}-vendor.tar.xz
+  CHECKOUT_DIR: ${{ github.event.repository.name }}-${{ github.ref_name }}
 
 on:
   push:
@@ -18,30 +22,27 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        path: ${{ github.event.repository.name }}-${{ github.ref_name }}
-    
+        path: ${{ env.CHECKOUT_DIR }}
 
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: 'stable'
-        cache-dependency-path: ${{ github.event.repository.name }}-${{ github.ref_name }}/go.sum
+        cache-dependency-path: ${{ env.CHECKOUT_DIR }}/go.sum
 
 
     - name: fetch deps
       run: go mod vendor
-      working-directory: ${{ github.event.repository.name }}-${{ github.ref_name }}
+      working-directory: ${{ env.CHECKOUT_DIR }}
 
     - name: compress vendor
-      uses: TheDoctor0/zip-release@0.7.1
-      with: 
-        type: tar
-        filename: ${{ github.event.repository.name }}-${{ github.ref_name }}-vendor.tar.gz
-        path: ${{ github.event.repository.name }}-${{ github.ref_name }}/vendor
+      run: >
+         tar ${{ env.TAR_REPRO_OPTS }}  -caf ${{ env.TAR_NAME }}
+         ${{ env.CHECKOUT_DIR }}/vendor
     
     - name: release
       uses: softprops/action-gh-release@v0.1.15
       with:
-        files: ${{ github.event.repository.name }}-${{ github.ref_name }}-vendor.tar.gz
+        files: ${{ env.TAR_NAME }}
         body: Go vendor tarball for Gentoo Linux overlay package
         generate_release_notes: false
