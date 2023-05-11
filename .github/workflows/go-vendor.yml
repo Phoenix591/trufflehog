@@ -46,3 +46,4 @@ jobs:
         files: ${{ env.TAR_NAME }}
         body: Go vendor tarball for Gentoo Linux overlay package
         generate_release_notes: false
+        fail_on_unmatched_files: true
