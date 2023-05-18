@@ -1,4 +1,4 @@
-package buildkite
+package aiven
 
 import (
 	"context"
@@ -14,26 +14,23 @@ import (
 
 type Scanner struct{}
 
-func (s Scanner) Version() int { return 1 }
-
 // Ensure the Scanner satisfies the interface at compile time.
 var _ detectors.Detector = (*Scanner)(nil)
-var _ detectors.Versioner = (*Scanner)(nil)
 
 var (
 	client = common.SaneHttpClient()
 
 	// Make sure that your group is surrounded in boundary characters such as below to reduce false positives.
-	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"buildkite"}) + `\b([a-z0-9]{40})\b`)
+	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"aiven"}) + `([a-zA-Z0-9/+=]{372})`)
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
 // Use identifiers in the secret preferably, or the provider name.
 func (s Scanner) Keywords() []string {
-	return []string{"buildkite"}
+	return []string{"aiven"}
 }
 
-// FromData will find and optionally verify Buildkite secrets in a given set of bytes.
+// FromData will find and optionally verify Aiven secrets in a given set of bytes.
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (results []detectors.Result, err error) {
 	dataStr := string(data)
 
@@ -46,16 +43,16 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		resMatch := strings.TrimSpace(match[1])
 
 		s1 := detectors.Result{
-			DetectorType: detectorspb.DetectorType_Buildkite,
+			DetectorType: detectorspb.DetectorType_Aiven,
 			Raw:          []byte(resMatch),
 		}
 
 		if verify {
-			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.buildkite.com/v2/access-token", nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.aiven.io/v1/project", nil)
 			if err != nil {
 				continue
 			}
-			req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", resMatch))
+			req.Header.Add("Authorization", fmt.Sprintf("aivenv1 %s", resMatch))
 			res, err := client.Do(req)
 			if err == nil {
 				defer res.Body.Close()
@@ -77,5 +74,5 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 }
 
 func (s Scanner) Type() detectorspb.DetectorType {
-	return detectorspb.DetectorType_Buildkite
+	return detectorspb.DetectorType_Aiven
 }

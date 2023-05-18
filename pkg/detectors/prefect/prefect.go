@@ -1,4 +1,4 @@
-package buildkite
+package prefect
 
 import (
 	"context"
@@ -14,26 +14,23 @@ import (
 
 type Scanner struct{}
 
-func (s Scanner) Version() int { return 1 }
-
 // Ensure the Scanner satisfies the interface at compile time.
 var _ detectors.Detector = (*Scanner)(nil)
-var _ detectors.Versioner = (*Scanner)(nil)
 
 var (
 	client = common.SaneHttpClient()
 
 	// Make sure that your group is surrounded in boundary characters such as below to reduce false positives.
-	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"buildkite"}) + `\b([a-z0-9]{40})\b`)
+	keyPat = regexp.MustCompile(`\b(pnu_[a-zA-Z0-9]{36})\b`)
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
 // Use identifiers in the secret preferably, or the provider name.
 func (s Scanner) Keywords() []string {
-	return []string{"buildkite"}
+	return []string{"pnu_"}
 }
 
-// FromData will find and optionally verify Buildkite secrets in a given set of bytes.
+// FromData will find and optionally verify Prefect secrets in a given set of bytes.
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (results []detectors.Result, err error) {
 	dataStr := string(data)
 
@@ -46,12 +43,12 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		resMatch := strings.TrimSpace(match[1])
 
 		s1 := detectors.Result{
-			DetectorType: detectorspb.DetectorType_Buildkite,
+			DetectorType: detectorspb.DetectorType_Prefect,
 			Raw:          []byte(resMatch),
 		}
 
 		if verify {
-			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.buildkite.com/v2/access-token", nil)
+			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.prefect.cloud/auth/login", nil)
 			if err != nil {
 				continue
 			}
@@ -77,5 +74,5 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 }
 
 func (s Scanner) Type() detectorspb.DetectorType {
-	return detectorspb.DetectorType_Buildkite
+	return detectorspb.DetectorType_Prefect
 }
