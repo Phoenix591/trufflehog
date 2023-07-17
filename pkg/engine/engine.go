@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
@@ -233,6 +234,22 @@ func (e *Engine) BytesScanned() uint64 {
 	return e.bytesScanned
 }
 
+func (e *Engine) dedupeAndSend(chunkResults []detectors.ResultWithMetadata) {
+	dedupeMap := make(map[string]struct{})
+	for _, result := range chunkResults {
+		// dedupe by comparing the detector type, raw result, and source metadata
+		// NOTE: in order for the PLAIN decoder to maintain precedence, make sure UTF8 is the first decoder in the
+		// default decoders list
+		key := fmt.Sprintf("%s%s%s%+v", result.DetectorType.String(), result.Raw, result.RawV2, result.SourceMetadata)
+		if _, ok := dedupeMap[key]; ok {
+			continue
+		}
+		dedupeMap[key] = struct{}{}
+		e.results <- result
+	}
+
+}
+
 func (e *Engine) DetectorAvgTime() map[string][]time.Duration {
 	logger := context.Background().Logger()
 	avgTime := map[string][]time.Duration{}
@@ -257,6 +274,7 @@ func (e *Engine) DetectorAvgTime() map[string][]time.Duration {
 func (e *Engine) detectorWorker(ctx context.Context) {
 	for originalChunk := range e.chunks {
 		for chunk := range sources.Chunker(originalChunk) {
+			var chunkResults []detectors.ResultWithMetadata
 			matchedKeywords := make(map[string]struct{})
 			atomic.AddUint64(&e.bytesScanned, uint64(len(chunk.Data)))
 			for _, decoder := range e.decoders {
@@ -272,7 +290,9 @@ func (e *Engine) detectorWorker(ctx context.Context) {
 					ctx.Logger().Info("unknown decoder type", "type", reflect.TypeOf(decoder).String())
 					decoderType = detectorspb.DecoderType_UNKNOWN
 				}
+
 				decoded := decoder.FromChunk(chunk)
+
 				if decoded == nil {
 					continue
 				}
@@ -332,7 +352,7 @@ func (e *Engine) detectorWorker(ctx context.Context) {
 								continue
 							}
 							result.DecoderType = decoderType
-							e.results <- detectors.CopyMetadata(resultChunk, result)
+							chunkResults = append(chunkResults, detectors.CopyMetadata(resultChunk, result))
 
 						}
 						if len(results) > 0 {
@@ -352,6 +372,7 @@ func (e *Engine) detectorWorker(ctx context.Context) {
 					}
 				}
 			}
+			e.dedupeAndSend(chunkResults)
 		}
 		atomic.AddUint64(&e.chunksScanned, 1)
 	}

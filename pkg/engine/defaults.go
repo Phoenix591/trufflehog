@@ -323,7 +323,6 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/iconfinder"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/iexapis"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/iexcloud"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/image4"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/imagekit"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/imagga"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/impala"
@@ -405,7 +404,6 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/metaapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/metrilo"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/microsoftteamswebhook"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/midise"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/mindmeister"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/miro"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/mite"
@@ -1385,7 +1383,6 @@ func DefaultDetectors() []detectors.Detector {
 		sendbirdorganizationapi.Scanner{},
 		chatfule.Scanner{},
 		convier.Scanner{},
-		midise.Scanner{},
 		loadmill.Scanner{},
 		magicbell.Scanner{},
 		glitterlyapi.Scanner{},
@@ -1418,7 +1415,6 @@ func DefaultDetectors() []detectors.Detector {
 		exportsdk.Scanner{},
 		rechargepayments.Scanner{},
 		browserstack.Scanner{},
-		image4.Scanner{},
 		crossbrowsertesting.Scanner{},
 		flowdash.Scanner{},
 		lunchmoney.Scanner{},
