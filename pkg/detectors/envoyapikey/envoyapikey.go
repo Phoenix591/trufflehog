@@ -1,4 +1,4 @@
-package microsoftteamswebhook
+package envoyapikey
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
@@ -19,19 +18,19 @@ type Scanner struct{}
 var _ detectors.Detector = (*Scanner)(nil)
 
 var (
-	client = common.SaneHttpClientTimeOut(5 * time.Second)
+	client = common.SaneHttpClient()
 
 	// Make sure that your group is surrounded in boundary characters such as below to reduce false positives.
-	keyPat = regexp.MustCompile(`(https:\/\/[a-zA-Z-0-9]+\.webhook\.office\.com\/webhookb2\/[a-zA-Z-0-9]{8}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{12}\@[a-zA-Z-0-9]{8}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{12}\/IncomingWebhook\/[a-zA-Z-0-9]{32}\/[a-zA-Z-0-9]{8}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{4}-[a-zA-Z-0-9]{12})`)
+	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"envoy"}) + `\b([a-zA-Z0-9]{220})\b`)
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
 // Use identifiers in the secret preferably, or the provider name.
 func (s Scanner) Keywords() []string {
-	return []string{"webhook.office.com"}
+	return []string{"envoy"}
 }
 
-// FromData will find and optionally verify MicrosoftTeamsWebhook secrets in a given set of bytes.
+// FromData will find and optionally verify Envoy secrets in a given set of bytes.
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (results []detectors.Result, err error) {
 	dataStr := string(data)
 
@@ -44,30 +43,34 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		resMatch := strings.TrimSpace(match[1])
 
 		s1 := detectors.Result{
-			DetectorType: detectorspb.DetectorType_MicrosoftTeamsWebhook,
+			DetectorType: detectorspb.DetectorType_EnvoyApiKey,
 			Raw:          []byte(resMatch),
 		}
+
 		if verify {
-			payload := strings.NewReader(`{'text':''}`)
-			req, err := http.NewRequestWithContext(ctx, "POST", resMatch, payload)
+			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.envoy.com/v1/locations", nil)
 			if err != nil {
 				continue
 			}
-			req.Header.Add("Content-Type", "application/json")
+			req.Header.Add("Accept", "application/vnd.envoy+json; version=3")
+			req.Header.Add("X-Api-Key", resMatch)
 			res, err := client.Do(req)
 			if err == nil {
-				body, err := io.ReadAll(res.Body)
-				res.Body.Close()
-				if err == nil {
-					if res.StatusCode >= 200 && strings.Contains(string(body), "Text is required") {
+				defer res.Body.Close()
+				body, _ := io.ReadAll(res.Body)
+
+				// Invalid API keys can also return status code 200, so check for presence of 'status 401' in response body.
+				if res.StatusCode >= 200 && res.StatusCode < 300 || res.StatusCode == 403 {
+					if !strings.Contains(string(body), `"status":401`) {
 						s1.Verified = true
+					}
+				} else {
+					// This function will check false positives for common test words, but also it will make sure the key appears 'random' enough to be a real key.
+					if detectors.IsKnownFalsePositive(resMatch, detectors.DefaultFalsePositives, true) {
+						continue
 					}
 				}
 			}
-		}
-
-		if !s1.Verified && detectors.IsKnownFalsePositive(resMatch, detectors.DefaultFalsePositives, false) {
-			continue
 		}
 
 		results = append(results, s1)
@@ -77,5 +80,5 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 }
 
 func (s Scanner) Type() detectorspb.DetectorType {
-	return detectorspb.DetectorType_MicrosoftTeamsWebhook
+	return detectorspb.DetectorType_EnvoyApiKey
 }

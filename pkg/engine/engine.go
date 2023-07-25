@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	ahocorasick "github.com/petar-dambovaliev/aho-corasick"
+	ahocorasick "github.com/BobuSumisu/aho-corasick"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
@@ -43,7 +43,7 @@ type Engine struct {
 
 	// prefilter is a ahocorasick struct used for doing efficient string
 	// matching given a set of words (keywords from the rules in the config)
-	prefilter ahocorasick.AhoCorasick
+	prefilter ahocorasick.Trie
 }
 
 type EngineOption func(*Engine)
@@ -113,6 +113,7 @@ func Start(ctx context.Context, options ...EngineOption) *Engine {
 		chunks:          make(chan *sources.Chunk),
 		results:         make(chan detectors.ResultWithMetadata),
 		detectorAvgTime: sync.Map{},
+		sourcesWg:       &errgroup.Group{},
 	}
 
 	for _, option := range options {
@@ -127,10 +128,8 @@ func Start(ctx context.Context, options ...EngineOption) *Engine {
 	}
 	ctx.Logger().V(2).Info("engine started", "workers", e.concurrency)
 
-	sourcesWg, egCtx := errgroup.WithContext(ctx)
-	sourcesWg.SetLimit(e.concurrency)
-	e.sourcesWg = sourcesWg
-	ctx.SetParent(egCtx)
+	// Limit number of concurrent goroutines dedicated to chunking a source.
+	e.sourcesWg.SetLimit(e.concurrency)
 
 	if len(e.decoders) == 0 {
 		e.decoders = decoders.DefaultDecoders()
@@ -151,13 +150,7 @@ func Start(ctx context.Context, options ...EngineOption) *Engine {
 	for _, d := range e.detectors[true] {
 		keywords = append(keywords, d.Keywords()...)
 	}
-	builder := ahocorasick.NewAhoCorasickBuilder(ahocorasick.Opts{
-		AsciiCaseInsensitive: true,
-		MatchOnlyWholeWords:  false,
-		MatchKind:            ahocorasick.LeftMostLongestMatch,
-		DFA:                  true,
-	})
-	e.prefilter = builder.Build(keywords)
+	e.prefilter = *ahocorasick.NewTrieBuilder().AddStrings(keywords).Build()
 
 	ctx.Logger().Info("loaded decoders", "count", len(e.decoders))
 	ctx.Logger().Info("loaded detectors",
@@ -185,7 +178,7 @@ func Start(ctx context.Context, options ...EngineOption) *Engine {
 	for i := 0; i < e.concurrency; i++ {
 		e.workersWg.Add(1)
 		go func() {
-			defer common.RecoverWithExit(ctx)
+			defer common.Recover(ctx)
 			defer e.workersWg.Done()
 			e.detectorWorker(ctx)
 		}()
@@ -298,8 +291,8 @@ func (e *Engine) detectorWorker(ctx context.Context) {
 				}
 
 				// build a map of all keywords that were matched in the chunk
-				for _, m := range e.prefilter.FindAll(string(decoded.Data)) {
-					matchedKeywords[strings.ToLower(string(decoded.Data[m.Start():m.End()]))] = struct{}{}
+				for _, m := range e.prefilter.MatchString(string(decoded.Data)) {
+					matchedKeywords[strings.ToLower(m.MatchString())] = struct{}{}
 				}
 
 				for verify, detectorsSet := range e.detectors {
@@ -378,29 +371,21 @@ func (e *Engine) detectorWorker(ctx context.Context) {
 	}
 }
 
-// lineNumberSupportedSources is a list of sources that support line numbers.
-// It is stored this way because slice consts are not supported.
-func lineNumberSupportedSources() []sourcespb.SourceType {
-	return []sourcespb.SourceType{
-		sourcespb.SourceType_SOURCE_TYPE_GIT,
+// SupportsLineNumbers determines if a line number can be found for a source type.
+func SupportsLineNumbers(sourceType sourcespb.SourceType) bool {
+	switch sourceType {
+	case sourcespb.SourceType_SOURCE_TYPE_GIT,
 		sourcespb.SourceType_SOURCE_TYPE_GITHUB,
 		sourcespb.SourceType_SOURCE_TYPE_GITLAB,
 		sourcespb.SourceType_SOURCE_TYPE_BITBUCKET,
 		sourcespb.SourceType_SOURCE_TYPE_GERRIT,
 		sourcespb.SourceType_SOURCE_TYPE_GITHUB_UNAUTHENTICATED_ORG,
 		sourcespb.SourceType_SOURCE_TYPE_PUBLIC_GIT,
-		sourcespb.SourceType_SOURCE_TYPE_FILESYSTEM,
+		sourcespb.SourceType_SOURCE_TYPE_FILESYSTEM:
+		return true
+	default:
+		return false
 	}
-}
-
-// SupportsLineNumbers determines if a line number can be found for a source type.
-func SupportsLineNumbers(sourceType sourcespb.SourceType) bool {
-	for _, i := range lineNumberSupportedSources() {
-		if i == sourceType {
-			return true
-		}
-	}
-	return false
 }
 
 // FragmentLineOffset sets the line number for a provided source chunk with a given detector result.
