@@ -6,10 +6,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/sourcespb"
-	"golang.org/x/sync/errgroup"
 )
 
 // handle uniquely identifies a Source given to the manager to manage. If the
@@ -19,7 +20,7 @@ type handle int64
 
 // SourceInitFunc is a function that takes a source and job ID and returns an
 // initialized Source.
-type SourceInitFunc func(ctx context.Context, sourceID int64, jobID int64) (Source, error)
+type SourceInitFunc func(ctx context.Context, jobID, sourceID int64) (Source, error)
 
 // sourceInfo is an aggregate struct to store source information provided on
 // initialization.
@@ -150,20 +151,28 @@ func (s *SourceManager) asyncRun(ctx context.Context, handle handle) (JobProgres
 	if err := s.preflightChecks(ctx, handle); err != nil {
 		return JobProgressRef{}, err
 	}
+	// Get the name. Should never fail due to preflight checks.
+	sourceInfo, ok := s.getSourceInfo(handle)
+	if !ok {
+		return JobProgressRef{SourceID: int64(handle)}, fmt.Errorf("unrecognized handle")
+	}
+	sourceName := sourceInfo.name
 	// Get a Job ID.
 	ctx = context.WithValue(ctx, "source_id", int64(handle))
 	jobID, err := s.api.GetJobID(ctx, int64(handle))
 	if err != nil {
-		return JobProgressRef{SourceID: int64(handle)}, err
+		return JobProgressRef{SourceID: int64(handle), SourceName: sourceName}, err
 	}
 	// Create a JobProgress object for tracking progress.
-	progress := NewJobProgress(int64(handle), jobID, WithHooks(s.hooks...))
+	ctx, cancel := context.WithCancel(ctx)
+	progress := NewJobProgress(jobID, int64(handle), sourceName, WithHooks(s.hooks...), WithCancel(cancel))
 	s.pool.Go(func() error {
 		ctx := context.WithValues(ctx,
 			"job_id", jobID,
 			"source_manager_worker_id", common.RandomID(5),
 		)
 		defer common.Recover(ctx)
+		defer cancel()
 		return s.run(ctx, handle, jobID, progress)
 	})
 	return progress.Ref(), nil
@@ -189,6 +198,13 @@ func (s *SourceManager) Wait() error {
 
 	// Return the first error returned by run.
 	return s.pool.Wait()
+}
+
+// ScanChunk injects a chunk into the output stream of chunks to be scanned.
+// This method should rarely be used. TODO: Remove when dependencies no longer
+// rely on this functionality.
+func (s *SourceManager) ScanChunk(chunk *Chunk) {
+	s.outputChunks <- chunk
 }
 
 // preflightChecks is a helper method to check the Manager or the context isn't
@@ -221,11 +237,12 @@ func (s *SourceManager) run(ctx context.Context, handle handle, jobID int64, rep
 		report.ReportError(Fatal{err})
 		return Fatal{err}
 	}
-	source, err := sourceInfo.initFunc(ctx, int64(handle), jobID)
+	source, err := sourceInfo.initFunc(ctx, jobID, int64(handle))
 	if err != nil {
 		report.ReportError(Fatal{err})
 		return Fatal{err}
 	}
+	report.TrackProgress(source.GetProgress())
 	ctx = context.WithValues(ctx,
 		"source_type", source.Type().String(),
 		"source_name", sourceInfo.name,
@@ -248,6 +265,7 @@ func (s *SourceManager) runWithoutUnits(ctx context.Context, handle handle, sour
 	go func() {
 		defer wg.Done()
 		for chunk := range ch {
+			chunk.JobID = source.JobID()
 			report.ReportChunk(nil, chunk)
 			s.outputChunks <- chunk
 		}
@@ -327,6 +345,9 @@ func (s *SourceManager) runWithUnits(ctx context.Context, handle handle, source 
 			defer wg.Done()
 			defer func() { report.EndUnitChunking(unit, time.Now()) }()
 			for chunk := range chunkReporter.chunkCh {
+				if src, ok := source.(Source); ok {
+					chunk.JobID = src.JobID()
+				}
 				s.outputChunks <- chunk
 			}
 		}()

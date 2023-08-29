@@ -415,6 +415,13 @@ func (e *Engine) ResultsChan() chan detectors.ResultWithMetadata {
 	return e.results
 }
 
+// ScanChunk injects a chunk into the output stream of chunks to be scanned.
+// This method should rarely be used. TODO: Remove when dependencies no longer
+// rely on this functionality.
+func (e *Engine) ScanChunk(chunk *sources.Chunk) {
+	e.sourceManager.ScanChunk(chunk)
+}
+
 // detectableChunk is a decoded chunk that is ready to be scanned by its detector.
 type detectableChunk struct {
 	detector detectors.Detector
@@ -595,17 +602,20 @@ func SupportsLineNumbers(sourceType sourcespb.SourceType) bool {
 
 // FragmentLineOffset sets the line number for a provided source chunk with a given detector result.
 func FragmentLineOffset(chunk *sources.Chunk, result *detectors.Result) (int64, bool) {
-	lines := bytes.Split(chunk.Data, []byte("\n"))
-	for i, line := range lines {
-		if bytes.Contains(line, result.Raw) {
-			// if the line contains the ignore tag, we should ignore the result
-			if bytes.Contains(line, []byte(ignoreTag)) {
-				return int64(i), true
-			}
-			return int64(i), false
-		}
+	before, after, found := bytes.Cut(chunk.Data, result.Raw)
+	if !found {
+		return 0, false
 	}
-	return 0, false
+	lineNumber := int64(bytes.Count(before, []byte("\n")))
+	// If the line contains the ignore tag, we should ignore the result.
+	endLine := bytes.Index(after, []byte("\n"))
+	if endLine == -1 {
+		endLine = len(after)
+	}
+	if bytes.Contains(after[:endLine], []byte(ignoreTag)) {
+		return lineNumber, true
+	}
+	return lineNumber, false
 }
 
 // FragmentFirstLine returns the first line number of a fragment along with a pointer to the value to update in the
