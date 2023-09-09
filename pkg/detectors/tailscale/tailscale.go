@@ -1,9 +1,10 @@
-package pagerdutyapikey
+package tailscale
 
 import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -21,53 +22,56 @@ var (
 	client = common.SaneHttpClient()
 
 	// Make sure that your group is surrounded in boundary characters such as below to reduce false positives.
-	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"pagerduty", "pd"}) + `\b([a-zA-Z0-9_+-]{20})\b`)
+	keyPat = regexp.MustCompile(`\btskey-[a-z]+-[0-9A-Za-z_]+-[0-9A-Za-z_]+\b`)
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
 // Use identifiers in the secret preferably, or the provider name.
 func (s Scanner) Keywords() []string {
-	return []string{"pagerduty", "pd"}
+	return []string{"tskey-", "tskey-api-", "tskey-oauth-"}
 }
 
-// FromData will find and optionally verify PagerDutyApiKey secrets in a given set of bytes.
+// FromData will find and optionally verify Tailscaleapi secrets in a given set of bytes.
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (results []detectors.Result, err error) {
 	dataStr := string(data)
 
 	matches := keyPat.FindAllStringSubmatch(dataStr, -1)
 
 	for _, match := range matches {
-		if len(match) != 2 {
-			continue
-		}
-		resMatch := strings.TrimSpace(match[1])
+		resMatch := strings.TrimSpace(match[0])
 
 		s1 := detectors.Result{
-			DetectorType: detectorspb.DetectorType_PagerDutyApiKey,
+			DetectorType: detectorspb.DetectorType_Tailscale,
 			Raw:          []byte(resMatch),
 		}
 
 		if verify {
-			req, err := http.NewRequestWithContext(ctx, "GET", "https://api.pagerduty.com/users", nil)
+			const u = "https://api.tailscale.com/api/v2/secret-scanning/verify"
+			vals := url.Values{"key": []string{resMatch}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(vals.Encode()))
 			if err != nil {
 				continue
 			}
-			req.Header.Add("Accept", "application/vnd.pagerduty+json;version=2")
-			req.Header.Add("Content-Type", "application/json")
-			req.Header.Add("Authorization", fmt.Sprintf("Token %s", resMatch))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			res, err := client.Do(req)
 			if err == nil {
 				defer res.Body.Close()
-				if res.StatusCode >= 200 && res.StatusCode < 300 {
+				switch res.StatusCode {
+				case http.StatusNoContent:
 					s1.Verified = true
+				case http.StatusUnauthorized:
+					// The secret is determinately not verified (nothing to do)
+				default:
+					s1.VerificationError = fmt.Errorf("unexpected HTTP response status %d", res.StatusCode)
 				}
+			} else {
+				s1.VerificationError = err
 			}
 		}
 
-		if !s1.Verified {
-			if detectors.IsKnownFalsePositive(string(s1.Raw), detectors.DefaultFalsePositives, true) {
-				continue
-			}
+		// This function will check false positives for common test words, but also it will make sure the key appears 'random' enough to be a real key.
+		if !s1.Verified && detectors.IsKnownFalsePositive(resMatch, detectors.DefaultFalsePositives, true) {
+			continue
 		}
 
 		results = append(results, s1)
@@ -77,5 +81,5 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 }
 
 func (s Scanner) Type() detectorspb.DetectorType {
-	return detectorspb.DetectorType_PagerDutyApiKey
+	return detectorspb.DetectorType_Tailscale
 }
