@@ -246,7 +246,8 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/feedier"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/fetchrss"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/fibery"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/figmapersonalaccesstoken"
+	figmapersonalaccesstokenV1 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/figmapersonalaccesstoken/v1"
+	figmapersonalaccesstokenV2 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/figmapersonalaccesstoken/v2"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/fileio"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/finage"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/financialmodelingprep"
@@ -728,6 +729,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/walkscore"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/weatherbit"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/weatherstack"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/web3storage"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/webex"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/webflow"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/webscraper"
@@ -769,8 +771,8 @@ func DefaultDetectors() []detectors.Detector {
 		aws.New(),
 		&azure.Scanner{},
 		&slack.Scanner{}, // has 4 secret types
-		&gitlabv2.Scanner{},
 		&gitlab.Scanner{},
+		&gitlabv2.Scanner{},
 		&sendgrid.Scanner{},
 		&mailchimp.Scanner{},
 		&okta.Scanner{},
@@ -823,7 +825,8 @@ func DefaultDetectors() []detectors.Detector {
 		&fastlypersonaltoken.Scanner{},
 		&snykkey.Scanner{},
 		&postmark.Scanner{},
-		&figmapersonalaccesstoken.Scanner{},
+		&figmapersonalaccesstokenV1.Scanner{},
+		&figmapersonalaccesstokenV2.Scanner{},
 		&github_old.Scanner{},
 		&webex.Scanner{},
 		&segmentapikey.Scanner{},
@@ -1544,6 +1547,7 @@ func DefaultDetectors() []detectors.Detector {
 		salesforce.Scanner{},
 		sourcegraph.Scanner{},
 		tailscale.Scanner{},
+		web3storage.Scanner{},
 	}
 
 }

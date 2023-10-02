@@ -295,6 +295,7 @@ type AzureStorage struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*AzureStorage_ConnectionString
 	//	*AzureStorage_BasicAuth
 	//	*AzureStorage_ClientCertificate
@@ -412,6 +413,7 @@ type Bitbucket struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*Bitbucket_Token
 	//	*Bitbucket_Oauth
 	//	*Bitbucket_BasicAuth
@@ -530,6 +532,7 @@ type CircleCI struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*CircleCI_Token
 	Credential isCircleCI_Credential `protobuf_oneof:"credential"`
 }
@@ -604,6 +607,7 @@ type Confluence struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*Confluence_Unauthenticated
 	//	*Confluence_BasicAuth
 	//	*Confluence_Token
@@ -753,6 +757,7 @@ type Docker struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*Docker_Unauthenticated
 	//	*Docker_BasicAuth
 	//	*Docker_BearerToken
@@ -869,6 +874,7 @@ type ECR struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*ECR_AccessKey
 	Credential isECR_Credential `protobuf_oneof:"credential"`
 	Registries []string         `protobuf:"bytes,2,rep,name=registries,proto3" json:"registries,omitempty"`
@@ -1000,6 +1006,7 @@ type GCS struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*GCS_JsonServiceAccount
 	//	*GCS_ApiKey
 	//	*GCS_Unauthenticated
@@ -1184,6 +1191,7 @@ type Git struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*Git_BasicAuth
 	//	*Git_Unauthenticated
 	//	*Git_SshAuth
@@ -1295,6 +1303,7 @@ type GitLab struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*GitLab_Token
 	//	*GitLab_Oauth
 	//	*GitLab_BasicAuth
@@ -1413,6 +1422,7 @@ type GitHub struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*GitHub_GithubApp
 	//	*GitHub_Token
 	//	*GitHub_Unauthenticated
@@ -1616,6 +1626,7 @@ type GoogleDrive struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*GoogleDrive_RefreshToken
 	Credential isGoogleDrive_Credential `protobuf_oneof:"credential"`
 }
@@ -1683,6 +1694,7 @@ type JIRA struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*JIRA_BasicAuth
 	//	*JIRA_Unauthenticated
 	//	*JIRA_Oauth
@@ -1814,6 +1826,7 @@ type NPMUnauthenticatedPackage struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*NPMUnauthenticatedPackage_Unauthenticated
 	Credential isNPMUnauthenticatedPackage_Credential `protobuf_oneof:"credential"`
 }
@@ -1880,6 +1893,7 @@ type PyPIUnauthenticatedPackage struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*PyPIUnauthenticatedPackage_Unauthenticated
 	Credential isPyPIUnauthenticatedPackage_Credential `protobuf_oneof:"credential"`
 }
@@ -1946,6 +1960,7 @@ type S3 struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*S3_AccessKey
 	//	*S3_Unauthenticated
 	//	*S3_CloudEnvironment
@@ -2079,6 +2094,7 @@ type Slack struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*Slack_Token
 	//	*Slack_Tokens
 	Credential isSlack_Credential `protobuf_oneof:"credential"`
@@ -2220,6 +2236,7 @@ type Buildkite struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*Buildkite_Token
 	Credential isBuildkite_Credential `protobuf_oneof:"credential"`
 }
@@ -2287,6 +2304,7 @@ type Gerrit struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*Gerrit_BasicAuth
 	//	*Gerrit_Unauthenticated
 	Credential isGerrit_Credential `protobuf_oneof:"credential"`
@@ -2383,6 +2401,7 @@ type Jenkins struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*Jenkins_BasicAuth
 	//	*Jenkins_Header
 	Credential isJenkins_Credential `protobuf_oneof:"credential"`
@@ -2471,6 +2490,7 @@ type Teams struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*Teams_Token
 	//	*Teams_Authenticated
 	//	*Teams_Oauth
@@ -2598,6 +2618,7 @@ type Artifactory struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*Artifactory_BasicAuth
 	//	*Artifactory_AccessToken
 	Credential   isArtifactory_Credential `protobuf_oneof:"credential"`
@@ -2772,6 +2793,7 @@ type PublicEventMonitoring struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*PublicEventMonitoring_Unauthenticated
 	Credential isPublicEventMonitoring_Credential `protobuf_oneof:"credential"`
 	Domain     string                             `protobuf:"bytes,2,opt,name=domain,proto3" json:"domain,omitempty"`
@@ -2862,6 +2884,7 @@ type SlackRealtime struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*SlackRealtime_Tokens
 	Credential isSlackRealtime_Credential `protobuf_oneof:"credential"`
 }
@@ -2928,6 +2951,7 @@ type Sharepoint struct {
 	unknownFields protoimpl.UnknownFields
 
 	// Types that are assignable to Credential:
+	//
 	//	*Sharepoint_Oauth
 	Credential isSharepoint_Credential `protobuf_oneof:"credential"`
 	SiteUrl    string                  `protobuf:"bytes,2,opt,name=site_url,json=siteUrl,proto3" json:"site_url,omitempty"`
@@ -3003,6 +3027,7 @@ type AzureRepos struct {
 
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Types that are assignable to Credential:
+	//
 	//	*AzureRepos_Token
 	//	*AzureRepos_Oauth
 	Credential      isAzureRepos_Credential `protobuf_oneof:"credential"`

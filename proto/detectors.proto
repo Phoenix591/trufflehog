@@ -938,6 +938,9 @@ enum DetectorType {
   Snowflake = 927;
   Sourcegraph = 928;
   Tailscale = 929;
+  Web3Storage = 930;
+  AzureStorage = 931;
+  PlanetScaleDb = 932;
 }
 
 message Result {
