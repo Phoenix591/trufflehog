@@ -174,18 +174,18 @@ type UnitMetrics struct {
 	StartTime *time.Time `json:"start_time,omitempty"`
 	EndTime   *time.Time `json:"end_time,omitempty"`
 	// Total number of chunks produced from this unit.
-	TotalChunks uint64 `json:"total_chunks,omitempty"`
+	TotalChunks uint64 `json:"total_chunks"`
 	// Total number of bytes produced from this unit.
-	TotalBytes uint64 `json:"total_bytes,omitempty"`
+	TotalBytes uint64 `json:"total_bytes"`
 	// All errors encountered by this unit.
-	Errors []error `json:"errors,omitempty"`
+	Errors []error `json:"errors"`
 	// Flag to mark that these metrics were intentionally evicted from
 	// the cache.
 	handled bool
 }
 
 func (u UnitMetrics) IsFinished() bool {
-	return !u.EndTime.IsZero()
+	return u.EndTime != nil
 }
 
 // ElapsedTime is a convenience method that provides the elapsed time the job

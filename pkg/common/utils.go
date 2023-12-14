@@ -2,7 +2,6 @@ package common
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/binary"
@@ -28,18 +27,6 @@ func RemoveStringSliceItem(item string, slice *[]string) {
 			*slice = (*slice)[:len(*slice)-1]
 		}
 	}
-}
-
-func MinInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func BytesEqual(a, b []byte, numBytes int) bool {
-	limit := MinInt(numBytes, MinInt(len(a), len(b))-1)
-	return bytes.Equal(a[:limit], b[:limit])
 }
 
 func ResponseContainsSubstring(reader io.ReadCloser, target string) (bool, error) {
@@ -74,8 +61,8 @@ func GetAccountNumFromAWSID(AWSID string) (string, error) {
 	if len(AWSID) < 4 {
 		return "", fmt.Errorf("AWSID is too short")
 	}
-	trimmed_AWSID := AWSID[4:]
-	decodedBytes, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(trimmed_AWSID))
+	trimmedAWSID := AWSID[4:]
+	decodedBytes, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(trimmedAWSID))
 	if err != nil {
 		return "", err
 	}
@@ -88,6 +75,6 @@ func GetAccountNumFromAWSID(AWSID string) (string, error) {
 	copy(data[2:], decodedBytes[0:6])
 	z := binary.BigEndian.Uint64(data)
 	const mask uint64 = 0x7fffffffff80
-	account_num := (z & mask) >> 7
-	return fmt.Sprintf("%012d", account_num), nil
+	accountNum := (z & mask) >> 7
+	return fmt.Sprintf("%012d", accountNum), nil
 }
