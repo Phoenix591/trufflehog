@@ -1,11 +1,12 @@
-package azuredevopspersonalaccesstoken
+package azuresearchquerykey
 
 import (
 	"context"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
+
+	regexp "github.com/wasilibs/go-re2"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
@@ -22,8 +23,8 @@ var _ detectors.Detector = (*Scanner)(nil)
 var (
 	defaultClient = common.SaneHttpClient()
 	// Make sure that your group is surrounded in boundary characters such as below to reduce false positives.
-	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"azure"}) + `\b([0-9a-z]{52})\b`)
-	orgPat = regexp.MustCompile(detectors.PrefixRegex([]string{"azure"}) + `\b([0-9a-z]{7,40})\b`)
+	keyPat = regexp.MustCompile(detectors.PrefixRegex([]string{"azure"}) + `\b([0-9a-zA-Z]{52})\b`)
+	urlPat = regexp.MustCompile(detectors.PrefixRegex([]string{"azure"}) + `https:\/\/([0-9a-z]{5,40})\.search\.windows\.net\/indexes\/([0-9a-z]{5,40})\b`)
 )
 
 // Keywords are used for efficiently pre-filtering chunks.
@@ -32,46 +33,45 @@ func (s Scanner) Keywords() []string {
 	return []string{"azure"}
 }
 
-// FromData will find and optionally verify AzureDevopsPersonalAccessToken secrets in a given set of bytes.
+// FromData will find and optionally verify AzureSearchQueryKey secrets in a given set of bytes.
 func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (results []detectors.Result, err error) {
 	dataStr := string(data)
 
 	matches := keyPat.FindAllStringSubmatch(dataStr, -1)
-	orgMatches := orgPat.FindAllStringSubmatch(dataStr, -1)
+	urlMatches := urlPat.FindAllStringSubmatch(dataStr, -1)
 
 	for _, match := range matches {
 		if len(match) != 2 {
 			continue
 		}
 		resMatch := strings.TrimSpace(match[1])
-		for _, orgMatch := range orgMatches {
-			if len(orgMatch) != 2 {
-				continue
-			}
-			resOrgMatch := strings.TrimSpace(orgMatch[1])
+
+		for _, urlMatch := range urlMatches {
+			resTrim := strings.Split(strings.TrimSpace(urlMatch[0]), " ")
+			resUrlMatch := resTrim[len(resTrim)-1]
 
 			s1 := detectors.Result{
-				DetectorType: detectorspb.DetectorType_AzureDevopsPersonalAccessToken,
+				DetectorType: detectorspb.DetectorType_AzureSearchQueryKey,
 				Raw:          []byte(resMatch),
-				RawV2:        []byte(resMatch + resOrgMatch),
+				RawV2:        []byte(resMatch + resUrlMatch),
 			}
-
 			if verify {
 				client := s.client
 				if client == nil {
 					client = defaultClient
 				}
-				req, err := http.NewRequestWithContext(ctx, "GET", "https://dev.azure.com/"+resOrgMatch+"/_apis/projects", nil)
+				req, err := http.NewRequestWithContext(ctx, "GET", resUrlMatch+"/docs/$count?api-version=2023-10-01-Preview", nil)
 				if err != nil {
 					continue
 				}
-				req.SetBasicAuth("", resMatch)
+				req.Header.Add("api-key", resMatch)
+
 				res, err := client.Do(req)
 				if err == nil {
 					defer res.Body.Close()
 					if res.StatusCode >= 200 && res.StatusCode < 300 {
 						s1.Verified = true
-					} else if res.StatusCode == 401 {
+					} else if res.StatusCode == 401 || res.StatusCode == 403 {
 						// The secret is determinately not verified (nothing to do)
 					} else {
 						err = fmt.Errorf("unexpected HTTP response status %d", res.StatusCode)
@@ -90,10 +90,9 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 			results = append(results, s1)
 		}
 	}
-
 	return results, nil
 }
 
 func (s Scanner) Type() detectorspb.DetectorType {
-	return detectorspb.DetectorType_AzureDevopsPersonalAccessToken
+	return detectorspb.DetectorType_AzureSearchQueryKey
 }
