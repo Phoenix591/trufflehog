@@ -48,7 +48,7 @@ Several options available for you:
 
 ```bash
 # MacOS users
-brew install trufflesecurity/trufflehog/trufflehog
+brew install trufflehog
 
 # Docker
 docker run --rm -it -v "$PWD:/pwd" trufflesecurity/trufflehog:latest github --repo https://github.com/trufflesecurity/test_keys
@@ -473,8 +473,8 @@ detectors:
     keywords:
       - hog
     regex:
-      hogID: \b(HOG[0-9A-Z]{16})\b
-      hogToken: [^A-Za-z0-9+\/]{0,1}([A-Za-z0-9+\/]{40})[^A-Za-z0-9+\/]{0,1}
+      hogID: '\b(HOG[0-9A-Z]{17})\b'
+      hogToken: '[^A-Za-z0-9+\/]{0,1}([A-Za-z0-9+\/]{40})[^A-Za-z0-9+\/]{0,1}'
     verify:
       - endpoint: http://localhost:8000/
         # unsafe must be set if the endpoint is HTTP
