@@ -17,7 +17,6 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/airvisual"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/aiven"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/alchemy"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/alconost"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/alegra"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/aletheiaapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/algoliaadminkey"
@@ -281,6 +280,7 @@ import (
 	fullstoryv2 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/fullstory/v2"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/fxmarket"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/gcp"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/gcpapplicationdefaultcredentials"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/geckoboard"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/gemini"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/gengo"
@@ -359,6 +359,7 @@ import (
 	jiratokenv2 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/jiratoken/v2"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/jotform"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/jumpcloud"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/jupiterone"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/juro"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/kanban"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/kanbantool"
@@ -452,7 +453,6 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/nicereply"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/nightfall"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/nimble"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/nitro"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/noticeable"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/notion"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/nozbeteams"
@@ -469,6 +469,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/onelogin"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/onepagecrm"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/onesignal"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/onfleet"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/onwaterio"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/oopspam"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/openai"
@@ -481,6 +482,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/overloop"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/owlbot"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/packagecloud"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/pagarme"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/pagerdutyapikey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/pandadoc"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/pandascore"
@@ -759,6 +761,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/websitepulse"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/whoxy"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/wistia"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/wiz"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/worksnaps"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/workstack"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/worldcoinindex"
@@ -1016,7 +1019,8 @@ func DefaultDetectors() []detectors.Detector {
 		&doppler.Scanner{},
 		&codacy.Scanner{},
 		&gocardless.Scanner{},
-		&alconost.Scanner{},
+		// The service currently has blocked requests with a "TruffleHog" UserAgent.
+		// &alconost.Scanner{},
 		&rawg.Scanner{},
 		&accuweather.Scanner{},
 		&tomtom.Scanner{},
@@ -1115,7 +1119,6 @@ func DefaultDetectors() []detectors.Detector {
 		billomat.Scanner{},
 		blogger.Scanner{},
 		front.Scanner{},
-		nitro.Scanner{},
 		apify.Scanner{},
 		dynalist.Scanner{},
 		mavenlink.Scanner{},
@@ -1584,6 +1587,7 @@ func DefaultDetectors() []detectors.Detector {
 		rabbitmq.Scanner{},
 		planetscale.Scanner{},
 		portainertoken.Scanner{},
+		pagarme.Scanner{},
 		planetscaledb.Scanner{},
 		azure.Scanner{},
 		azurestorage.Scanner{},
@@ -1595,8 +1599,11 @@ func DefaultDetectors() []detectors.Detector {
 		azuresearchquerykey.Scanner{},
 		googleoauth2.Scanner{},
 		dockerhubv2.Scanner{},
+		&jupiterone.Scanner{},
+		gcpapplicationdefaultcredentials.Scanner{},
+		wiz.Scanner{},
+		onfleet.Scanner{},
 	}
-
 }
 
 func DefaultDetectorTypesImplementing[T any]() map[detectorspb.DetectorType]struct{} {
