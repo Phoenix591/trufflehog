@@ -402,11 +402,13 @@ func (e *Engine) initialize(ctx context.Context, options ...Option) error {
 }
 
 func (e *Engine) initSourceManager(ctx context.Context) {
+	const defaultOutputBufferSize = 64
+
 	opts := []func(*sources.SourceManager){
 		sources.WithConcurrentSources(int(e.concurrency)),
 		sources.WithConcurrentUnits(int(e.concurrency)),
 		sources.WithSourceUnits(),
-		sources.WithBufferedOutput(defaultChannelBuffer),
+		sources.WithBufferedOutput(defaultOutputBufferSize),
 	}
 	if e.jobReportWriter != nil {
 		unitHook, finishedMetrics := sources.NewUnitHook(ctx)
@@ -831,7 +833,7 @@ func (e *Engine) detectChunk(ctx context.Context, data detectableChunk) {
 		results = detectors.CleanResults(results)
 	}
 
-	results = detectors.FilterKnownFalsePositives(ctx, results, detectors.DefaultFalsePositives, true, e.logFilteredUnverified)
+	results = detectors.FilterKnownFalsePositives(ctx, data.detector, results, e.logFilteredUnverified)
 
 	if e.filterEntropy != nil {
 		results = detectors.FilterResultsWithEntropy(ctx, results, *e.filterEntropy, e.logFilteredUnverified)
