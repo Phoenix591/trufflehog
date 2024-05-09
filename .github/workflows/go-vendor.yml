@@ -4,7 +4,7 @@
 
 name: Create Go Vendor Tarball
 env:
-  TAR_REPRO_OPTS: '"--mtime=2023-01-01 00:00 UTC" --sort=name  --owner=0 --group=0 --numeric-owner'
+  TAR_REPRO_OPTS: '"--mtime=2024-01-01 00:00 UTC" --sort=name  --owner=0 --group=0 --numeric-owner'
   TAR_NAME: ${{ github.event.repository.name }}-${{ github.ref_name }}-vendor.tar.xz
   CHECKOUT_DIR: ${{ github.event.repository.name }}-${{ github.ref_name }}
 
@@ -20,12 +20,12 @@ jobs:
   vendor-tarball:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         path: ${{ env.CHECKOUT_DIR }}
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: 'stable'
         cache-dependency-path: ${{ env.CHECKOUT_DIR }}/go.sum
@@ -39,9 +39,9 @@ jobs:
       run: >
          tar ${{ env.TAR_REPRO_OPTS }}  -caf ${{ env.TAR_NAME }}
          ${{ env.CHECKOUT_DIR }}/vendor
-    
+
     - name: release
-      uses: softprops/action-gh-release@v0.1.15
+      uses: softprops/action-gh-release@v2
       with:
         files: ${{ env.TAR_NAME }}
         body: Go vendor tarball for Gentoo Linux overlay package
