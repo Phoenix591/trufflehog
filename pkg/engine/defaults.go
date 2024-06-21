@@ -233,6 +233,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/enablex"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/enigma"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/envoyapikey"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/eraser"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/etherscan"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/ethplorer"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/eventbrite"
@@ -311,6 +312,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/graphcms"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/graphhopper"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/groovehq"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/groq"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/gtmetrix"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/guardianapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/gumroad"
@@ -716,6 +718,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twist"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twitch"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twitter"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twitterconsumerkey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/tyntec"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/typeform"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/typetalk"
@@ -1604,6 +1607,9 @@ func DefaultDetectors() []detectors.Detector {
 		wiz.Scanner{},
 		onfleet.Scanner{},
 		intra42.Scanner{},
+		groq.Scanner{},
+		twitterconsumerkey.Scanner{},
+		eraser.Scanner{},
 	}
 }
 
