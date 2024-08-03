@@ -2,6 +2,7 @@ package huggingface
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/jedib0t/go-pretty/table"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/analyzer/analyzers"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/analyzer/config"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/analyzer/pb/analyzerpb"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
 )
 
 const (
@@ -17,6 +20,245 @@ const (
 	WRITE       = "write"
 	READ        = "read"
 )
+
+var _ analyzers.Analyzer = (*Analyzer)(nil)
+
+type Analyzer struct {
+	Cfg *config.Config
+}
+
+func (Analyzer) Type() analyzerpb.AnalyzerType { return analyzerpb.AnalyzerType_HuggingFace }
+
+func (a Analyzer) Analyze(_ context.Context, credInfo map[string]string) (*analyzers.AnalyzerResult, error) {
+	key, ok := credInfo["key"]
+	if !ok || key == "" {
+		return nil, fmt.Errorf("key not found in credentialInfo")
+	}
+
+	info, err := AnalyzePermissions(a.Cfg, key)
+	if err != nil {
+		return nil, err
+	}
+	return secretInfoToAnalyzerResult(info), nil
+}
+
+func bakeUnboundedResources(tokenJSON HFTokenJSON) []analyzers.Resource {
+	unboundedResources := make([]analyzers.Resource, len(tokenJSON.Orgs))
+	for idx, org := range tokenJSON.Orgs {
+		unboundedResources[idx] = analyzers.Resource{
+			Name: org.Name,
+			Type: "organization",
+			Metadata: map[string]interface{}{
+				"role":          org.Role,
+				"is_enterprise": org.IsEnterprise,
+			},
+		}
+	}
+	return unboundedResources
+}
+
+func bakeUnfineGrainedBindings(allModels []Model, tokenJSON HFTokenJSON) []analyzers.Binding {
+	bindings := make([]analyzers.Binding, len(allModels))
+
+	for idx, model := range allModels {
+		// Add Read Privs to All Models
+		modelResource := analyzers.Resource{
+			Name: model.Name,
+			Type: "model",
+			Metadata: map[string]interface{}{
+				"private": model.Private,
+			},
+		}
+
+		// means both read & write permission for the model
+		accessLevel := string(analyzers.READ)
+		if tokenJSON.Auth.AccessToken.Type == WRITE {
+			accessLevel = string(analyzers.WRITE)
+		}
+		bindings[idx] = analyzers.Binding{
+			Resource: modelResource,
+			Permission: analyzers.Permission{
+				Value: string(accessLevel),
+			},
+		}
+	}
+	return bindings
+}
+
+// finegrained scopes are grouped by org, user or model.
+func bakefineGrainedBindings(allModels []Model, tokenJSON HFTokenJSON) []analyzers.Binding {
+	// this section will extract the relevant permissions for each entity and store them in a map
+	var nameToPermissions = make(map[string]analyzers.Permission)
+	for _, permission := range tokenJSON.Auth.AccessToken.FineGrained.Scoped {
+		privs := analyzers.Permission{
+			Value: string(analyzers.NONE),
+		}
+		for _, perm := range permission.Permissions {
+			if perm == "repo.content.read" {
+				privs.Value = string(analyzers.READ)
+			} else if perm == "repo.write" {
+				privs.Value = string(analyzers.WRITE)
+			}
+		}
+		if permission.Entity.Type == "user" || permission.Entity.Type == "org" {
+			nameToPermissions[permission.Entity.Name] = privs
+		} else if permission.Entity.Type == "model" {
+			nameToPermissions[modelNameLookup(allModels, permission.Entity.ID)] = privs
+		}
+	}
+
+	bindings := make([]analyzers.Binding, len(allModels))
+	for idx, model := range allModels {
+
+		// Add Read Privs to All Models
+		modelResource := analyzers.Resource{
+			Name: model.Name,
+			Type: "model",
+			Metadata: map[string]interface{}{
+				"private": model.Private,
+			},
+		}
+
+		var perm analyzers.Permission
+		// get username/orgname for each model and apply those permissions
+		modelUsername := strings.Split(model.Name, "/")[0]
+		if permissions, ok := nameToPermissions[modelUsername]; ok {
+			perm = permissions
+		}
+		// override model permissions with repo-specific permissions
+		if permissions, ok := nameToPermissions[model.Name]; ok {
+			perm = permissions
+		}
+
+		bindings[idx] = analyzers.Binding{
+			Resource:   modelResource,
+			Permission: perm,
+		}
+	}
+	return bindings
+}
+
+func bakeOrganizationBindings(tokenJSON HFTokenJSON) []analyzers.Binding {
+	// check if there are any org permissions
+	// if so, save them as a map. Only need to do this once
+	// even if multiple orgs b/c as of 6/6/24, users can only define one set of scopes
+	// for all orgs referenced on an access token
+	orgPermissions := map[string]struct{}{}
+	var orgResource *analyzers.Resource = nil
+	for _, permission := range tokenJSON.Auth.AccessToken.FineGrained.Scoped {
+		if permission.Entity.Type == "org" {
+			orgResource = &analyzers.Resource{
+				Name: permission.Entity.Name,
+				Type: "organization",
+			}
+			for _, perm := range permission.Permissions {
+				orgPermissions[perm] = struct{}{}
+			}
+			break
+		}
+	}
+
+	bindings := make([]analyzers.Binding, 0)
+	// check if there are any org permissions
+	if orgResource == nil {
+		return bindings
+	}
+
+	for _, permission := range org_scopes_order {
+		for key, value := range org_scopes[permission] {
+			if _, ok := orgPermissions[key]; ok {
+				bindings = append(bindings, analyzers.Binding{
+					Resource: *orgResource,
+					Permission: analyzers.Permission{
+						Value: value,
+					},
+				})
+			}
+		}
+	}
+
+	return bindings
+}
+
+func bakeUserBindings(tokenJSON HFTokenJSON) []analyzers.Binding {
+	bindings := make([]analyzers.Binding, 0)
+	// build a map of all user permissions
+	users := map[string]struct{}{}
+	userPermissions := map[string]struct{}{}
+	for _, permission := range tokenJSON.Auth.AccessToken.FineGrained.Scoped {
+		if permission.Entity.Type == "user" {
+			users[permission.Entity.Name] = struct{}{}
+			for _, perm := range permission.Permissions {
+				userPermissions[perm] = struct{}{}
+			}
+		}
+	}
+
+	// global permissions only apply to user tokens as of 6/6/24
+	// but there would be a naming collision in the scopes document
+	// so we prepend "global." to the key and then add to the map
+	for _, permission := range tokenJSON.Auth.AccessToken.FineGrained.Global {
+		userPermissions["global."+permission] = struct{}{}
+	}
+
+	// check if there are any user permissions
+	if len(userPermissions) == 0 {
+		return bindings
+	}
+
+	userResource := analyzers.Resource{
+		Name: tokenJSON.Username,
+		Type: "user",
+	}
+	for _, permission := range user_scopes_order {
+		for key, value := range user_scopes[permission] {
+			if _, ok := userPermissions[key]; ok {
+				bindings = append(bindings, analyzers.Binding{
+					Resource: userResource,
+					Permission: analyzers.Permission{
+						Value: value,
+					},
+				})
+			}
+		}
+	}
+
+	return bindings
+}
+
+func secretInfoToAnalyzerResult(info *SecretInfo) *analyzers.AnalyzerResult {
+	if info == nil {
+		return nil
+	}
+
+	result := analyzers.AnalyzerResult{
+		AnalyzerType: analyzerpb.AnalyzerType_HuggingFace,
+		Metadata: map[string]interface{}{
+			"username":   info.Token.Username,
+			"name":       info.Token.Name,
+			"token_name": info.Token.Auth.AccessToken.Name,
+			"token_type": info.Token.Auth.AccessToken.Type,
+		},
+	}
+
+	if len(info.Token.Orgs) > 0 {
+		result.UnboundedResources = bakeUnboundedResources(info.Token)
+	}
+
+	result.Bindings = make([]analyzers.Binding, 0)
+	if info.Token.Auth.AccessToken.Type != FINEGRAINED {
+		result.Bindings = append(result.Bindings, bakeUnfineGrainedBindings(info.Models, info.Token)...)
+	}
+
+	result.Bindings = append(result.Bindings, bakefineGrainedBindings(info.Models, info.Token)...)
+
+	if info.Token.Auth.AccessToken.Type == FINEGRAINED {
+		result.Bindings = append(result.Bindings, bakeOrganizationBindings(info.Token)...)
+		result.Bindings = append(result.Bindings, bakeUserBindings(info.Token)...)
+	}
+
+	return &result
+}
 
 // HFTokenJSON is the struct for the HF /whoami-v2 API JSON response
 type HFTokenJSON struct {
@@ -131,62 +373,74 @@ func getTokenInfo(cfg *config.Config, key string) (HFTokenJSON, bool, error) {
 	return tokenJSON, true, nil
 }
 
-// AnalyzePermissions prints the permissions of a HuggingFace API key
-func AnalyzePermissions(cfg *config.Config, key string) {
+type SecretInfo struct {
+	Token  HFTokenJSON
+	Models []Model
+}
 
+func AnalyzePermissions(cfg *config.Config, key string) (*SecretInfo, error) {
 	// get token info
-	tokenJSON, success, err := getTokenInfo(cfg, key)
+	token, success, err := getTokenInfo(cfg, key)
 	if err != nil {
-		color.Red("[x] Error: " + err.Error())
-		return
+		return nil, err
 	}
 
-	// check if the token is valid
 	if !success {
-		color.Red("[x] Invalid HuggingFace Access Token")
-		return
+		return nil, fmt.Errorf("Invalid HuggingFace Access Token")
 	}
-	color.Green("[!] Valid HuggingFace Access Token\n\n")
-
-	// print user info
-	color.Yellow("[i] Username: " + tokenJSON.Username)
-	color.Yellow("[i] Name: " + tokenJSON.Name)
-	color.Yellow("[i] Token Name: " + tokenJSON.Auth.AccessToken.Name)
-	color.Yellow("[i] Token Type: " + tokenJSON.Auth.AccessToken.Type)
-
-	// print org info
-	printOrgs(tokenJSON)
 
 	// get all models by username
 	var allModels []Model
-	if userModels, err := getModelsByAuthor(cfg, key, tokenJSON.Username); err == nil {
-		allModels = append(allModels, userModels...)
-	} else {
-		color.Red("[x] Error: " + err.Error())
+	userModels, err := getModelsByAuthor(cfg, key, token.Username)
+	if err != nil {
+		return nil, err
+	}
+	allModels = append(allModels, userModels...)
+
+	// get all models from all orgs
+	for _, org := range token.Orgs {
+		orgModels, err := getModelsByAuthor(cfg, key, org.Name)
+		if err != nil {
+			return nil, err
+		}
+		allModels = append(allModels, orgModels...)
+	}
+
+	return &SecretInfo{
+		Token:  token,
+		Models: allModels,
+	}, nil
+}
+
+// AnalyzePermissions prints the permissions of a HuggingFace API key
+func AnalyzeAndPrintPermissions(cfg *config.Config, key string) {
+	info, err := AnalyzePermissions(cfg, key)
+	if err != nil {
+		color.Red("[x] Error: %s", err.Error())
 		return
 	}
 
-	// get all models from all orgs
-	for _, org := range tokenJSON.Orgs {
-		if orgModels, err := getModelsByAuthor(cfg, key, org.Name); err == nil {
-			allModels = append(allModels, orgModels...)
-		} else {
-			color.Red("[x] Error: " + err.Error())
-			return
-		}
-	}
+	color.Green("[!] Valid HuggingFace Access Token\n\n")
+
+	// print user info
+	color.Yellow("[i] Username: " + info.Token.Username)
+	color.Yellow("[i] Name: " + info.Token.Name)
+	color.Yellow("[i] Token Name: " + info.Token.Auth.AccessToken.Name)
+	color.Yellow("[i] Token Type: " + info.Token.Auth.AccessToken.Type)
+
+	// print org info
+	printOrgs(info.Token)
 
 	// print accessible models
-	printAccessibleModels(allModels, tokenJSON)
+	printAccessibleModels(info.Models, info.Token)
 
-	if tokenJSON.Auth.AccessToken.Type == FINEGRAINED {
+	if info.Token.Auth.AccessToken.Type == FINEGRAINED {
 		// print org permissions
-		printOrgPermissions(tokenJSON)
+		printOrgPermissions(info.Token)
 
 		// print user permissions
-		printUserPermissions(tokenJSON)
+		printUserPermissions(info.Token)
 	}
-
 }
 
 // printUserPermissions prints the user permissions
