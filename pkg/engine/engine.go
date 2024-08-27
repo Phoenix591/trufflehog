@@ -29,6 +29,8 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
 )
 
+const detectionTimeout = 10 * time.Second
+
 var errOverlap = errors.New(
 	"More than one detector has found this result. For your safety, verification has been disabled." +
 		"You can override this behavior by using the --allow-verification-overlap flag.",
@@ -731,7 +733,11 @@ func (e *Engine) scannerWorker(ctx context.Context) {
 		startTime := time.Now()
 		sourceVerify := chunk.Verify
 		for _, decoder := range e.decoders {
+			decodeStart := time.Now()
 			decoded := decoder.FromChunk(chunk)
+			decodeTime := time.Since(decodeStart).Microseconds()
+			decodeLatency.WithLabelValues(decoder.Type().String(), chunk.SourceName).Observe(float64(decodeTime))
+
 			if decoded == nil {
 				ctx.Logger().V(4).Info("no decoder found for chunk", "chunk", chunk)
 				continue
@@ -882,11 +888,15 @@ func (e *Engine) verificationOverlapWorker(ctx context.Context) {
 			// DO NOT VERIFY at this stage of the pipeline.
 			matchedBytes := detector.Matches()
 			for _, match := range matchedBytes {
+				ctx, cancel := context.WithTimeout(ctx, time.Second*2)
 				results, err := detector.FromData(ctx, false, match)
-				ctx.Logger().Error(
-					err, "error finding results in chunk during verification overlap",
-					"detector", detector.Key.Type().String(),
-				)
+				cancel()
+				if err != nil {
+					ctx.Logger().V(2).Error(
+						err, "error finding results in chunk during verification overlap",
+						"detector", detector.Key.Type().String(),
+					)
+				}
 
 				if len(results) == 0 {
 					continue
@@ -980,9 +990,9 @@ func (e *Engine) detectChunk(ctx context.Context, data detectableChunk) {
 	if e.printAvgDetectorTime {
 		start = time.Now()
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer common.Recover(ctx)
-	defer cancel()
+
+	ctx = context.WithValue(ctx, "detector", data.detector.Key.Loggable())
 
 	isFalsePositive := detectors.GetFalsePositiveCheck(data.detector)
 
@@ -996,12 +1006,16 @@ func (e *Engine) detectChunk(ctx context.Context, data detectableChunk) {
 	for _, matchBytes := range matches {
 		matchCount++
 		detectBytesPerMatch.Observe(float64(len(matchBytes)))
+
+		ctx, cancel := context.WithTimeout(ctx, detectionTimeout)
+		t := time.AfterFunc(detectionTimeout+1*time.Second, func() {
+			ctx.Logger().Error(nil, "a detector ignored the context timeout")
+		})
 		results, err := data.detector.Detector.FromData(ctx, data.chunk.Verify, matchBytes)
+		t.Stop()
+		cancel()
 		if err != nil {
-			ctx.Logger().Error(
-				err, "error finding results in chunk",
-				"detector", data.detector.Key.Type().String(),
-			)
+			ctx.Logger().Error(err, "error finding results in chunk")
 			continue
 		}
 

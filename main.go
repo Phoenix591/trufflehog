@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/felixge/fgprof"
@@ -37,57 +36,8 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/version"
 )
 
-// usageTemplate is a copy of kingpin.DefaultUsageTemplate with a minor change
-// to not list all flattened commands. This is required to hide all of the
-// analyze sub-commands from the main help.
-const usageTemplate = `{{define "FormatCommand" -}}
-{{if .FlagSummary}} {{.FlagSummary}}{{end -}}
-{{range .Args}}{{if not .Hidden}} {{if not .Required}}[{{end}}{{if .PlaceHolder}}{{.PlaceHolder}}{{else}}<{{.Name}}>{{end}}{{if .Value|IsCumulative}}...{{end}}{{if not .Required}}]{{end}}{{end}}{{end -}}
-{{end -}}
-
-{{define "FormatCommands" -}}
-{{range .Commands -}}
-{{if not .Hidden -}}
-  {{.FullCommand}}{{if .Default}}*{{end}}{{template "FormatCommand" .}}
-{{.Help|Wrap 4}}
-{{end -}}
-{{end -}}
-{{end -}}
-
-{{define "FormatUsage" -}}
-{{template "FormatCommand" .}}{{if .Commands}} <command> [<args> ...]{{end}}
-{{if .Help}}
-{{.Help|Wrap 0 -}}
-{{end -}}
-
-{{end -}}
-
-{{if .Context.SelectedCommand -}}
-usage: {{.App.Name}} {{.Context.SelectedCommand}}{{template "FormatUsage" .Context.SelectedCommand}}
-{{ else -}}
-usage: {{.App.Name}}{{template "FormatUsage" .App}}
-{{end}}
-{{if .Context.Flags -}}
-Flags:
-{{.Context.Flags|FlagsToTwoColumns|FormatTwoColumns}}
-{{end -}}
-{{if .Context.Args -}}
-Args:
-{{.Context.Args|ArgsToTwoColumns|FormatTwoColumns}}
-{{end -}}
-{{if .Context.SelectedCommand -}}
-{{if len .Context.SelectedCommand.Commands -}}
-Subcommands:
-{{template "FormatCommands" .Context.SelectedCommand}}
-{{end -}}
-{{else if .App.Commands -}}
-Commands:
-{{template "FormatCommands" .App}}
-{{end -}}
-`
-
 var (
-	cli                 = kingpin.New("TruffleHog", "TruffleHog is a tool for finding credentials.").UsageTemplate(usageTemplate)
+	cli                 = kingpin.New("TruffleHog", "TruffleHog is a tool for finding credentials.")
 	cmd                 string
 	debug               = cli.Flag("debug", "Run in debug mode.").Bool()
 	trace               = cli.Flag("trace", "Run in trace mode.").Bool()
@@ -349,7 +299,8 @@ func main() {
 	}
 
 	if !*noUpdate {
-		updateCfg.Fetcher = updater.Fetcher(usingTUI)
+		topLevelCmd, _, _ := strings.Cut(cmd, " ")
+		updateCfg.Fetcher = updater.Fetcher(topLevelCmd, usingTUI)
 	}
 	if version.BuildVersion == "dev" {
 		updateCfg.Fetcher = nil
@@ -387,9 +338,6 @@ func run(state overseer.State) {
 		} else {
 			logger.Info("cleaned temporary artifacts")
 		}
-
-		time.Sleep(time.Second * 10)
-		logger.Info("10 seconds elapsed. Forcing shutdown.")
 		os.Exit(0)
 	}()
 

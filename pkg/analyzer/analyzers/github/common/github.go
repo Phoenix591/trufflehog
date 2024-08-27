@@ -14,31 +14,40 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/analyzer/analyzers"
 )
 
-func checkFineGrained(token string, oauthScopes []analyzers.Permission) (string, bool) {
+type TokenType string
+
+const (
+	TokenTypeFineGrainedPAT TokenType = "Fine-Grained GitHub Personal Access Token"
+	TokenTypeClassicPAT     TokenType = "Classic GitHub Personal Access Token"
+	TokenTypeUserToServer   TokenType = "GitHub User-to-Server Token"
+	TokenTypeGitHubToken    TokenType = "GitHub Token"
+)
+
+func checkFineGrained(token string, oauthScopes []analyzers.Permission) (TokenType, bool) {
 	// For details on token prefixes, see:
 	// https://github.blog/2021-04-05-behind-githubs-new-authentication-token-formats/
 
 	// Special case for ghu_ prefix tokens (ex: in a codespace) that don't have the X-OAuth-Scopes header
 	if strings.HasPrefix(token, "ghu_") {
-		return "GitHub User-to-Server Token", true
+		return TokenTypeUserToServer, true
 	}
 
 	// Handle github_pat_ tokens
 	if strings.HasPrefix(token, "github_pat") {
-		return "Fine-Grained GitHub Personal Access Token", true
+		return TokenTypeFineGrainedPAT, true
 	}
 
 	// Handle classic PATs
 	if strings.HasPrefix(token, "ghp_") {
-		return "Classic GitHub Personal Access Token", false
+		return TokenTypeClassicPAT, false
 	}
 
 	// Catch-all for any other types
 	// If resp.Header "X-OAuth-Scopes" doesn't exist, then we have fine-grained permissions
 	if len(oauthScopes) > 0 {
-		return "GitHub Token", false
+		return TokenTypeGitHubToken, false
 	}
-	return "GitHub Token", true
+	return TokenTypeGitHubToken, true
 }
 
 type Permission int
@@ -55,10 +64,11 @@ type SecretInfo struct {
 }
 
 type TokenMetadata struct {
-	Type        string
+	Type        TokenType
 	FineGrained bool
 	User        *gh.User
 	Expiration  time.Time
+	// OauthScopes is only set for classic tokens.
 	OauthScopes []analyzers.Permission
 }
 
@@ -71,7 +81,7 @@ func GetTokenMetadata(token string, client *gh.Client) (*TokenMetadata, error) {
 		return nil, err
 	}
 
-	expiration, _ := time.Parse("2006-01-02 15:04:05 MST", resp.Header.Get("github-authentication-token-expiration"))
+	expiration, _ := time.Parse("2006-01-02 15:04:05 -0700", resp.Header.Get("github-authentication-token-expiration"))
 
 	var oauthScopes []analyzers.Permission
 	for _, scope := range resp.Header.Values("X-OAuth-Scopes") {
