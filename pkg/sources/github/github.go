@@ -13,20 +13,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/gobwas/glob"
-	"github.com/google/go-github/v63/github"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/handlers"
+	"github.com/google/go-github/v66/github"
 	"golang.org/x/exp/rand"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/cache"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/cache/memory"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/cache/simple"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/giturl"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/handlers"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/source_metadatapb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/sourcespb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sanitizer"
@@ -67,9 +66,10 @@ type Source struct {
 	resumeInfoSlice []string
 	connector       connector
 
-	includePRComments    bool
-	includeIssueComments bool
-	includeGistComments  bool
+	includePRComments     bool
+	includeIssueComments  bool
+	includeGistComments   bool
+	commentsTimeframeDays uint32
 
 	sources.Progress
 	sources.CommonSourceUnitUnmarshaller
@@ -84,20 +84,20 @@ var _ sources.SourceUnit = (*RepoUnit)(nil)
 var _ sources.SourceUnit = (*GistUnit)(nil)
 
 type RepoUnit struct {
-	name string
-	url  string
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
-func (r RepoUnit) SourceUnitID() (string, sources.SourceUnitKind) { return r.url, "repo" }
-func (r RepoUnit) Display() string                                { return r.name }
+func (r RepoUnit) SourceUnitID() (string, sources.SourceUnitKind) { return r.URL, "repo" }
+func (r RepoUnit) Display() string                                { return r.Name }
 
 type GistUnit struct {
-	name string
-	url  string
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
-func (g GistUnit) SourceUnitID() (string, sources.SourceUnitKind) { return g.url, "gist" }
-func (g GistUnit) Display() string                                { return g.name }
+func (g GistUnit) SourceUnitID() (string, sources.SourceUnitKind) { return g.URL, "gist" }
+func (g GistUnit) Display() string                                { return g.Name }
 
 // --------------------------------------------------------------------------------
 
@@ -118,6 +118,7 @@ func (s *Source) setScanOptions(base, head string) {
 // Ensure the Source satisfies the interfaces at compile time
 var _ sources.Source = (*Source)(nil)
 var _ sources.SourceUnitUnmarshaller = (*Source)(nil)
+var _ sources.SourceUnitEnumChunker = (*Source)(nil)
 
 var endsWithGithub = regexp.MustCompile(`github\.com/?$`)
 
@@ -212,6 +213,11 @@ func (s *Source) Init(aCtx context.Context, name string, jobID sources.JobID, so
 	s.jobPool = &errgroup.Group{}
 	s.jobPool.SetLimit(concurrency)
 
+	// Setup scan options if it wasn't provided.
+	if s.scanOptions == nil {
+		s.scanOptions = &git.ScanOptions{}
+	}
+
 	var conn sourcespb.GitHub
 	err = anypb.UnmarshalTo(connection, &conn, proto.UnmarshalOptions{})
 	if err != nil {
@@ -225,14 +231,14 @@ func (s *Source) Init(aCtx context.Context, name string, jobID sources.JobID, so
 	}
 	s.connector = connector
 
-	s.orgsCache = memory.New[string]()
+	s.orgsCache = simple.NewCache[string]()
 	for _, org := range s.conn.Organizations {
 		s.orgsCache.Set(org, org)
 	}
 	s.memberCache = make(map[string]struct{})
 
 	s.filteredRepoCache = s.newFilteredRepoCache(aCtx,
-		memory.New[string](),
+		simple.NewCache[string](),
 		append(s.conn.GetRepositories(), s.conn.GetIncludeRepos()...),
 		s.conn.GetIgnoreRepos(),
 	)
@@ -250,6 +256,7 @@ func (s *Source) Init(aCtx context.Context, name string, jobID sources.JobID, so
 	s.includeIssueComments = s.conn.IncludeIssueComments
 	s.includePRComments = s.conn.IncludePullRequestComments
 	s.includeGistComments = s.conn.IncludeGistComments
+	s.commentsTimeframeDays = s.conn.CommentsTimeframeDays
 
 	// Head or base should only be used with incoming webhooks
 	if (len(s.conn.Head) > 0 || len(s.conn.Base) > 0) && len(s.repos) != 1 {
@@ -317,11 +324,12 @@ func (s *Source) visibilityOf(ctx context.Context, repoURL string) source_metada
 
 // Chunks emits chunks of bytes over a channel.
 func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, targets ...sources.ChunkingTarget) error {
+	chunksReporter := sources.ChanReporter{Ch: chunksChan}
 	// If targets are provided, we're only scanning the data in those targets.
 	// Otherwise, we're scanning all data.
 	// This allows us to only scan the commit where a vulnerability was found.
 	if len(targets) > 0 {
-		errs := s.scanTargets(ctx, targets, chunksChan)
+		errs := s.scanTargets(ctx, targets, chunksReporter)
 		return errors.Join(errs...)
 	}
 
@@ -330,90 +338,88 @@ func (s *Source) Chunks(ctx context.Context, chunksChan chan *sources.Chunk, tar
 	githubSecondsSpentRateLimited.WithLabelValues(s.name).Set(0)
 	githubReposScanned.WithLabelValues(s.name).Set(0)
 
-	err := s.enumerate(ctx)
+	// We don't care about handling enumerated values as they happen during
+	// the normal Chunks flow because we enumerate and scan in two steps.
+	noopReporter := sources.VisitorReporter{
+		VisitUnit: func(context.Context, sources.SourceUnit) error {
+			return nil
+		},
+	}
+	err := s.Enumerate(ctx, noopReporter)
 	if err != nil {
 		return fmt.Errorf("error enumerating: %w", err)
 	}
 
-	return s.scan(ctx, chunksChan)
+	return s.scan(ctx, chunksReporter)
 }
 
-func (s *Source) enumerate(ctx context.Context) error {
-	// Create a reporter that does nothing for now.
-	noopReporter := sources.VisitorReporter{
+// Enumerate enumerates the GitHub source based on authentication method and
+// user configuration. It populates s.filteredRepoCache, s.repoInfoCache,
+// s.memberCache, s.totalRepoSize, s.orgsCache, and s.repos. Additionally,
+// repositories and gists are reported to the provided UnitReporter.
+func (s *Source) Enumerate(ctx context.Context, reporter sources.UnitReporter) error {
+	seenUnits := make(map[sources.SourceUnit]struct{})
+	// Wrapper reporter to deduplicate and filter found units.
+	dedupeReporter := sources.VisitorReporter{
 		VisitUnit: func(ctx context.Context, su sources.SourceUnit) error {
-			return nil
+			// Only report units that passed the user configured filter.
+			name := su.Display()
+			if !s.filteredRepoCache.Exists(name) {
+				return ctx.Err()
+			}
+			// Only report a unit once.
+			if _, ok := seenUnits[su]; ok {
+				return ctx.Err()
+			}
+			seenUnits[su] = struct{}{}
+			return reporter.UnitOk(ctx, su)
 		},
+		VisitErr: reporter.UnitErr,
 	}
+	// Report any values that were already configured.
+	// This compensates for differences in enumeration logic between `--org` and `--repo`.
+	// See: https://github.com/trufflesecurity/trufflehog/pull/2379#discussion_r1487454788
+	for _, name := range s.filteredRepoCache.Keys() {
+		url, _ := s.filteredRepoCache.Get(name)
+		url, err := s.ensureRepoInfoCache(ctx, url)
+		if err != nil {
+			if err := dedupeReporter.UnitErr(ctx, err); err != nil {
+				return err
+			}
+		}
+		if err := dedupeReporter.UnitOk(ctx, RepoUnit{Name: name, URL: url}); err != nil {
+			return err
+		}
+	}
+
 	// I'm not wild about switching on the connector type here (as opposed to dispatching to the connector itself) but
 	// this felt like a compromise that allowed me to isolate connection logic without rewriting the entire source.
 	switch c := s.connector.(type) {
 	case *appConnector:
-		if err := s.enumerateWithApp(ctx, c.InstallationClient(), noopReporter); err != nil {
+		if err := s.enumerateWithApp(ctx, c.InstallationClient(), dedupeReporter); err != nil {
 			return err
 		}
 	case *basicAuthConnector:
-		if err := s.enumerateBasicAuth(ctx, noopReporter); err != nil {
+		if err := s.enumerateBasicAuth(ctx, dedupeReporter); err != nil {
 			return err
 		}
 	case *tokenConnector:
-		if err := s.enumerateWithToken(ctx, c.IsGithubEnterprise(), noopReporter); err != nil {
+		if err := s.enumerateWithToken(ctx, c.IsGithubEnterprise(), dedupeReporter); err != nil {
 			return err
 		}
 	case *unauthenticatedConnector:
-		s.enumerateUnauthenticated(ctx, noopReporter)
+		s.enumerateUnauthenticated(ctx, dedupeReporter)
 	}
 	s.repos = make([]string, 0, s.filteredRepoCache.Count())
 
-RepoLoop:
+	// Double make sure that all enumerated repositories in the
+	// filteredRepoCache have an entry in the repoInfoCache.
 	for _, repo := range s.filteredRepoCache.Values() {
-		repoCtx := context.WithValue(ctx, "repo", repo)
+		ctx := context.WithValue(ctx, "repo", repo)
 
-		// Ensure that |s.repoInfoCache| contains an entry for |repo|.
-		// This compensates for differences in enumeration logic between `--org` and `--repo`.
-		// See: https://github.com/trufflesecurity/trufflehog/pull/2379#discussion_r1487454788
-		if _, ok := s.repoInfoCache.get(repo); !ok {
-			repoCtx.Logger().V(2).Info("Caching repository info")
-
-			_, urlParts, err := getRepoURLParts(repo)
-			if err != nil {
-				repoCtx.Logger().Error(err, "Failed to parse repository URL")
-				continue
-			}
-
-			if isGistUrl(urlParts) {
-				// Cache gist info.
-				for {
-					gistID := extractGistID(urlParts)
-					gist, _, err := s.connector.APIClient().Gists.Get(repoCtx, gistID)
-					// Normalize the URL to the Gist's pull URL.
-					// See https://github.com/trufflesecurity/trufflehog/pull/2625#issuecomment-2025507937
-					repo = gist.GetGitPullURL()
-					if s.handleRateLimit(repoCtx, err) {
-						continue
-					}
-					if err != nil {
-						repoCtx.Logger().Error(err, "Failed to fetch gist")
-						continue RepoLoop
-					}
-					s.cacheGistInfo(gist)
-					break
-				}
-			} else {
-				// Cache repository info.
-				for {
-					ghRepo, _, err := s.connector.APIClient().Repositories.Get(repoCtx, urlParts[1], urlParts[2])
-					if s.handleRateLimit(repoCtx, err) {
-						continue
-					}
-					if err != nil {
-						repoCtx.Logger().Error(err, "Failed to fetch repository")
-						continue RepoLoop
-					}
-					s.cacheRepoInfo(ghRepo)
-					break
-				}
-			}
+		repo, err := s.ensureRepoInfoCache(ctx, repo)
+		if err != nil {
+			ctx.Logger().Error(err, "error caching repo info")
 		}
 		s.repos = append(s.repos, repo)
 	}
@@ -422,6 +428,55 @@ RepoLoop:
 	// We must sort the repos so we can resume later if necessary.
 	sort.Strings(s.repos)
 	return nil
+}
+
+// ensureRepoInfoCache checks that s.repoInfoCache has an entry for the
+// provided repository URL. If not, it fetches and stores the metadata for the
+// repository. In some cases, the gist URL needs to be normalized, which is
+// returned by this function.
+func (s *Source) ensureRepoInfoCache(ctx context.Context, repo string) (string, error) {
+	if _, ok := s.repoInfoCache.get(repo); ok {
+		return repo, nil
+	}
+	ctx.Logger().V(2).Info("Caching repository info")
+
+	_, urlParts, err := getRepoURLParts(repo)
+	if err != nil {
+		return repo, fmt.Errorf("failed to parse repository URL: %w", err)
+	}
+
+	if isGistUrl(urlParts) {
+		// Cache gist info.
+		for {
+			gistID := extractGistID(urlParts)
+			gist, _, err := s.connector.APIClient().Gists.Get(ctx, gistID)
+			// Normalize the URL to the Gist's pull URL.
+			// See https://github.com/trufflesecurity/trufflehog/pull/2625#issuecomment-2025507937
+			repo = gist.GetGitPullURL()
+			if s.handleRateLimit(ctx, err) {
+				continue
+			}
+			if err != nil {
+				return repo, fmt.Errorf("failed to fetch gist")
+			}
+			s.cacheGistInfo(gist)
+			break
+		}
+	} else {
+		// Cache repository info.
+		for {
+			ghRepo, _, err := s.connector.APIClient().Repositories.Get(ctx, urlParts[1], urlParts[2])
+			if s.handleRateLimit(ctx, err) {
+				continue
+			}
+			if err != nil {
+				return repo, fmt.Errorf("failed to fetch repository")
+			}
+			s.cacheRepoInfo(ghRepo)
+			break
+		}
+	}
+	return repo, nil
 }
 
 func (s *Source) enumerateBasicAuth(ctx context.Context, reporter sources.UnitReporter) error {
@@ -564,7 +619,7 @@ func createGitHubClient(httpClient *http.Client, apiEndpoint string) (*github.Cl
 	return github.NewClient(httpClient).WithEnterpriseURLs(apiEndpoint, apiEndpoint)
 }
 
-func (s *Source) scan(ctx context.Context, chunksChan chan *sources.Chunk) error {
+func (s *Source) scan(ctx context.Context, reporter sources.ChunkReporter) error {
 	var scannedCount uint64 = 1
 
 	ctx.Logger().V(2).Info("Found repos to scan", "count", len(s.repos))
@@ -573,18 +628,13 @@ func (s *Source) scan(ctx context.Context, chunksChan chan *sources.Chunk) error
 	reposToScan, progressIndexOffset := sources.FilterReposToResume(s.repos, s.GetProgress().EncodedResumeInfo)
 	s.repos = reposToScan
 
-	scanErrs := sources.NewScanErrors()
-	// Setup scan options if it wasn't provided.
-	if s.scanOptions == nil {
-		s.scanOptions = &git.ScanOptions{}
-	}
-
 	for i, repoURL := range s.repos {
 		i, repoURL := i, repoURL
 		s.jobPool.Go(func() error {
 			if common.IsDone(ctx) {
 				return nil
 			}
+			ctx := context.WithValue(ctx, "repo", repoURL)
 
 			// TODO: set progress complete is being called concurrently with i
 			s.setProgressCompleteWithRepo(i, progressIndexOffset, repoURL)
@@ -595,68 +645,76 @@ func (s *Source) scan(ctx context.Context, chunksChan chan *sources.Chunk) error
 				s.resumeInfoSlice = sources.RemoveRepoFromResumeInfo(s.resumeInfoSlice, repoURL)
 			}(s, repoURL)
 
-			if !strings.HasSuffix(repoURL, ".git") {
-				scanErrs.Add(fmt.Errorf("repo %s does not end in .git", repoURL))
+			if err := s.scanRepo(ctx, repoURL, reporter); err != nil {
+				ctx.Logger().Error(err, "error scanning repo")
 				return nil
 			}
 
-			// Scan the repository
-			repoInfo, ok := s.repoInfoCache.get(repoURL)
-			if !ok {
-				// This should never happen.
-				err := fmt.Errorf("no repoInfo for URL: %s", repoURL)
-				ctx.Logger().Error(err, "failed to scan repository")
-				return nil
-			}
-			repoCtx := context.WithValues(ctx, "repo", repoURL)
-			duration, err := s.cloneAndScanRepo(repoCtx, repoURL, repoInfo, chunksChan)
-			if err != nil {
-				scanErrs.Add(err)
-				return nil
-			}
-
-			// Scan the wiki, if enabled, and the repo has one.
-			if s.conn.IncludeWikis && repoInfo.hasWiki && s.wikiIsReachable(ctx, repoURL) {
-				wikiURL := strings.TrimSuffix(repoURL, ".git") + ".wiki.git"
-				wikiCtx := context.WithValue(ctx, "repo", wikiURL)
-
-				_, err := s.cloneAndScanRepo(wikiCtx, wikiURL, repoInfo, chunksChan)
-				if err != nil {
-					// Ignore "Repository not found" errors.
-					// It's common for GitHub's API to say a repo has a wiki when it doesn't.
-					if !strings.Contains(err.Error(), "not found") {
-						scanErrs.Add(fmt.Errorf("error scanning wiki: %w", err))
-					}
-
-					// Don't return, it still might be possible to scan comments.
-				}
-			}
-
-			// Scan comments, if enabled.
-			if s.includeGistComments || s.includeIssueComments || s.includePRComments {
-				if err = s.scanComments(repoCtx, repoURL, repoInfo, chunksChan); err != nil {
-					scanErrs.Add(fmt.Errorf("error scanning comments in repo %s: %w", repoURL, err))
-					return nil
-				}
-			}
-
-			repoCtx.Logger().V(2).Info(fmt.Sprintf("scanned %d/%d repos", scannedCount, len(s.repos)), "duration_seconds", duration)
-			githubReposScanned.WithLabelValues(s.name).Inc()
 			atomic.AddUint64(&scannedCount, 1)
 			return nil
 		})
 	}
 
 	_ = s.jobPool.Wait()
-	if scanErrs.Count() > 0 {
-		ctx.Logger().Info("failed to scan some repositories", "error_count", scanErrs.Count(), "errors", scanErrs.String())
-	}
 	s.SetProgressComplete(len(s.repos), len(s.repos), "Completed GitHub scan", "")
 
 	return nil
 }
 
-func (s *Source) cloneAndScanRepo(ctx context.Context, repoURL string, repoInfo repoInfo, chunksChan chan *sources.Chunk) (time.Duration, error) {
+// scanRepo attempts to scan the provided URL and any associated wiki and
+// comments if configured. An error is returned if we could not find necessary
+// repository metadata or clone the repo, otherwise all errors are reported to
+// the ChunkReporter.
+func (s *Source) scanRepo(ctx context.Context, repoURL string, reporter sources.ChunkReporter) error {
+	if !strings.HasSuffix(repoURL, ".git") {
+		return fmt.Errorf("repo does not end in .git")
+	}
+	// Scan the repository
+	repoInfo, ok := s.repoInfoCache.get(repoURL)
+	if !ok {
+		// This should never happen.
+		return fmt.Errorf("no repoInfo for URL: %s", repoURL)
+	}
+	duration, err := s.cloneAndScanRepo(ctx, repoURL, repoInfo, reporter)
+	if err != nil {
+		return err
+	}
+
+	// Scan the wiki, if enabled, and the repo has one.
+	if s.conn.IncludeWikis && repoInfo.hasWiki && s.wikiIsReachable(ctx, repoURL) {
+		wikiURL := strings.TrimSuffix(repoURL, ".git") + ".wiki.git"
+		wikiCtx := context.WithValue(ctx, "repo", wikiURL)
+
+		_, err := s.cloneAndScanRepo(wikiCtx, wikiURL, repoInfo, reporter)
+		if err != nil {
+			// Ignore "Repository not found" errors.
+			// It's common for GitHub's API to say a repo has a wiki when it doesn't.
+			if !strings.Contains(err.Error(), "not found") {
+				if err := reporter.ChunkErr(ctx, fmt.Errorf("error scanning wiki: %w", err)); err != nil {
+					return err
+				}
+			}
+
+			// Don't return, it still might be possible to scan comments.
+		}
+	}
+
+	// Scan comments, if enabled.
+	if s.includeGistComments || s.includeIssueComments || s.includePRComments {
+		if err := s.scanComments(ctx, repoURL, repoInfo, reporter); err != nil {
+			err := fmt.Errorf("error scanning comments: %w", err)
+			if err := reporter.ChunkErr(ctx, err); err != nil {
+				return err
+			}
+		}
+	}
+
+	ctx.Logger().V(2).Info("finished scanning repo", "duration_seconds", duration)
+	githubReposScanned.WithLabelValues(s.name).Inc()
+	return nil
+}
+
+func (s *Source) cloneAndScanRepo(ctx context.Context, repoURL string, repoInfo repoInfo, reporter sources.ChunkReporter) (time.Duration, error) {
 	var duration time.Duration
 
 	ctx.Logger().V(2).Info("attempting to clone repo")
@@ -669,17 +727,8 @@ func (s *Source) cloneAndScanRepo(ctx context.Context, repoURL string, repoInfo 
 	// TODO: Can this be set once or does it need to be set on every iteration? Is |s.scanOptions| set every clone?
 	s.setScanOptions(s.conn.Base, s.conn.Head)
 
-	// Repo size is not collected for wikis.
-	var logger logr.Logger
-	if !strings.HasSuffix(repoURL, ".wiki.git") && repoInfo.size > 0 {
-		logger = ctx.Logger().WithValues("repo_size_kb", repoInfo.size)
-	} else {
-		logger = ctx.Logger()
-	}
-	logger.V(2).Info("scanning repo")
-
 	start := time.Now()
-	if err = s.git.ScanRepo(ctx, repo, path, s.scanOptions, sources.ChanReporter{Ch: chunksChan}); err != nil {
+	if err = s.git.ScanRepo(ctx, repo, path, s.scanOptions, reporter); err != nil {
 		return duration, fmt.Errorf("error scanning repo %s: %w", repoURL, err)
 	}
 	duration = time.Since(start)
@@ -785,7 +834,7 @@ func (s *Source) addUserGistsToCache(ctx context.Context, user string, reporter 
 		for _, gist := range gists {
 			s.filteredRepoCache.Set(gist.GetID(), gist.GetGitPullURL())
 			s.cacheGistInfo(gist)
-			if err := reporter.UnitOk(ctx, GistUnit{name: gist.GetID(), url: gist.GetGitPullURL()}); err != nil {
+			if err := reporter.UnitOk(ctx, GistUnit{Name: gist.GetID(), URL: gist.GetGitPullURL()}); err != nil {
 				return err
 			}
 		}
@@ -948,16 +997,23 @@ func (s *Source) setProgressCompleteWithRepo(index int, offset int, repoURL stri
 	s.SetProgressComplete(index+offset, len(s.repos)+offset, fmt.Sprintf("Repo: %s", repoURL), encodedResumeInfo)
 }
 
-func (s *Source) scanComments(ctx context.Context, repoPath string, repoInfo repoInfo, chunksChan chan *sources.Chunk) error {
+func (s *Source) scanComments(ctx context.Context, repoPath string, repoInfo repoInfo, reporter sources.ChunkReporter) error {
 	urlString, urlParts, err := getRepoURLParts(repoPath)
 	if err != nil {
 		return err
 	}
 
+	var cutoffTime *time.Time
+	if s.commentsTimeframeDays > 0 {
+		daysToFilter := int(s.commentsTimeframeDays)
+		t := time.Now().AddDate(0, 0, -daysToFilter)
+		cutoffTime = &t
+	}
+
 	if s.includeGistComments && isGistUrl(urlParts) {
-		return s.processGistComments(ctx, urlString, urlParts, repoInfo, chunksChan)
+		return s.processGistComments(ctx, urlString, urlParts, repoInfo, reporter, cutoffTime)
 	} else if s.includeIssueComments || s.includePRComments {
-		return s.processRepoComments(ctx, repoInfo, chunksChan)
+		return s.processRepoComments(ctx, repoInfo, reporter, cutoffTime)
 	}
 	return nil
 }
@@ -1017,7 +1073,7 @@ func getRepoURLParts(repoURLString string) (string, []string, error) {
 
 const initialPage = 1 // page to start listing from
 
-func (s *Source) processGistComments(ctx context.Context, gistURL string, urlParts []string, repoInfo repoInfo, chunksChan chan *sources.Chunk) error {
+func (s *Source) processGistComments(ctx context.Context, gistURL string, urlParts []string, repoInfo repoInfo, reporter sources.ChunkReporter, cutoffTime *time.Time) error {
 	ctx.Logger().V(2).Info("Scanning GitHub Gist comments")
 
 	// GitHub Gist URL.
@@ -1036,7 +1092,7 @@ func (s *Source) processGistComments(ctx context.Context, gistURL string, urlPar
 			return err
 		}
 
-		if err = s.chunkGistComments(ctx, gistURL, repoInfo, comments, chunksChan); err != nil {
+		if err = s.chunkGistComments(ctx, gistURL, repoInfo, comments, reporter, cutoffTime); err != nil {
 			return err
 		}
 
@@ -1056,10 +1112,15 @@ func isGistUrl(urlParts []string) bool {
 	return strings.EqualFold(urlParts[0], "gist.github.com") || (len(urlParts) == 4 && strings.EqualFold(urlParts[1], "gist"))
 }
 
-func (s *Source) chunkGistComments(ctx context.Context, gistURL string, gistInfo repoInfo, comments []*github.GistComment, chunksChan chan *sources.Chunk) error {
+func (s *Source) chunkGistComments(ctx context.Context, gistURL string, gistInfo repoInfo, comments []*github.GistComment, reporter sources.ChunkReporter, cutoffTime *time.Time) error {
 	for _, comment := range comments {
+		// Stop processing comments as soon as one created before the cutoff time is detected, as these are sorted
+		if cutoffTime != nil && comment.GetCreatedAt().Before(*cutoffTime) {
+			break
+		}
+
 		// Create chunk and send it to the channel.
-		chunk := &sources.Chunk{
+		chunk := sources.Chunk{
 			SourceName: s.name,
 			SourceID:   s.SourceID(),
 			SourceType: s.Type(),
@@ -1080,10 +1141,8 @@ func (s *Source) chunkGistComments(ctx context.Context, gistURL string, gistInfo
 			Verify: s.verify,
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case chunksChan <- chunk:
+		if err := reporter.ChunkOk(ctx, chunk); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1092,10 +1151,10 @@ func (s *Source) chunkGistComments(ctx context.Context, gistURL string, gistInfo
 // Note: these can't be consts because the address is needed when using with the GitHub library.
 var (
 	// sortType defines the criteria for sorting comments.
-	// By default, comments are sorted by their creation date.
-	sortType = "created"
+	// By setting this to "updated" we can use this to reliably manage the comment timeframe filtering below
+	sortType = "updated"
 	// directionType defines the direction of sorting.
-	// "desc" means comments will be sorted in descending order, showing the latest comments first.
+	// "desc" means comments will be sorted in descending order, showing the latest comments first, which is critical for managing the comment timeframe filtering
 	directionType = "desc"
 	// allComments is a placeholder for specifying the comment ID to start listing from.
 	// A value of 0 means that all comments will be listed.
@@ -1104,23 +1163,23 @@ var (
 	state = "all"
 )
 
-func (s *Source) processRepoComments(ctx context.Context, repoInfo repoInfo, chunksChan chan *sources.Chunk) error {
+func (s *Source) processRepoComments(ctx context.Context, repoInfo repoInfo, reporter sources.ChunkReporter, cutoffTime *time.Time) error {
 	if s.includeIssueComments {
 		ctx.Logger().V(2).Info("Scanning issues")
-		if err := s.processIssues(ctx, repoInfo, chunksChan); err != nil {
+		if err := s.processIssues(ctx, repoInfo, reporter); err != nil {
 			return err
 		}
-		if err := s.processIssueComments(ctx, repoInfo, chunksChan); err != nil {
+		if err := s.processIssueComments(ctx, repoInfo, reporter, cutoffTime); err != nil {
 			return err
 		}
 	}
 
 	if s.includePRComments {
 		ctx.Logger().V(2).Info("Scanning pull requests")
-		if err := s.processPRs(ctx, repoInfo, chunksChan); err != nil {
+		if err := s.processPRs(ctx, repoInfo, reporter); err != nil {
 			return err
 		}
-		if err := s.processPRComments(ctx, repoInfo, chunksChan); err != nil {
+		if err := s.processPRComments(ctx, repoInfo, reporter, cutoffTime); err != nil {
 			return err
 		}
 	}
@@ -1129,7 +1188,7 @@ func (s *Source) processRepoComments(ctx context.Context, repoInfo repoInfo, chu
 
 }
 
-func (s *Source) processIssues(ctx context.Context, repoInfo repoInfo, chunksChan chan *sources.Chunk) error {
+func (s *Source) processIssues(ctx context.Context, repoInfo repoInfo, reporter sources.ChunkReporter) error {
 	bodyTextsOpts := &github.IssueListByRepoOptions{
 		Sort:      sortType,
 		Direction: directionType,
@@ -1150,7 +1209,7 @@ func (s *Source) processIssues(ctx context.Context, repoInfo repoInfo, chunksCha
 			return err
 		}
 
-		if err = s.chunkIssues(ctx, repoInfo, issues, chunksChan); err != nil {
+		if err = s.chunkIssues(ctx, repoInfo, issues, reporter); err != nil {
 			return err
 		}
 
@@ -1163,16 +1222,15 @@ func (s *Source) processIssues(ctx context.Context, repoInfo repoInfo, chunksCha
 	return nil
 }
 
-func (s *Source) chunkIssues(ctx context.Context, repoInfo repoInfo, issues []*github.Issue, chunksChan chan *sources.Chunk) error {
+func (s *Source) chunkIssues(ctx context.Context, repoInfo repoInfo, issues []*github.Issue, reporter sources.ChunkReporter) error {
 	for _, issue := range issues {
-
 		// Skip pull requests since covered by processPRs.
 		if issue.IsPullRequest() {
 			continue
 		}
 
 		// Create chunk and send it to the channel.
-		chunk := &sources.Chunk{
+		chunk := sources.Chunk{
 			SourceName: s.name,
 			SourceID:   s.SourceID(),
 			JobID:      s.JobID(),
@@ -1193,16 +1251,14 @@ func (s *Source) chunkIssues(ctx context.Context, repoInfo repoInfo, issues []*g
 			Verify: s.verify,
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case chunksChan <- chunk:
+		if err := reporter.ChunkOk(ctx, chunk); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *Source) processIssueComments(ctx context.Context, repoInfo repoInfo, chunksChan chan *sources.Chunk) error {
+func (s *Source) processIssueComments(ctx context.Context, repoInfo repoInfo, reporter sources.ChunkReporter, cutoffTime *time.Time) error {
 	issueOpts := &github.IssueListCommentsOptions{
 		Sort:      &sortType,
 		Direction: &directionType,
@@ -1221,7 +1277,7 @@ func (s *Source) processIssueComments(ctx context.Context, repoInfo repoInfo, ch
 			return err
 		}
 
-		if err = s.chunkIssueComments(ctx, repoInfo, issueComments, chunksChan); err != nil {
+		if err = s.chunkIssueComments(ctx, repoInfo, issueComments, reporter, cutoffTime); err != nil {
 			return err
 		}
 
@@ -1233,10 +1289,15 @@ func (s *Source) processIssueComments(ctx context.Context, repoInfo repoInfo, ch
 	return nil
 }
 
-func (s *Source) chunkIssueComments(ctx context.Context, repoInfo repoInfo, comments []*github.IssueComment, chunksChan chan *sources.Chunk) error {
+func (s *Source) chunkIssueComments(ctx context.Context, repoInfo repoInfo, comments []*github.IssueComment, reporter sources.ChunkReporter, cutoffTime *time.Time) error {
 	for _, comment := range comments {
+		// Stop processing comments as soon as one created before the cutoff time is detected, as these are sorted
+		if cutoffTime != nil && comment.GetUpdatedAt().Before(*cutoffTime) {
+			continue
+		}
+
 		// Create chunk and send it to the channel.
-		chunk := &sources.Chunk{
+		chunk := sources.Chunk{
 			SourceName: s.name,
 			SourceID:   s.SourceID(),
 			JobID:      s.JobID(),
@@ -1257,16 +1318,14 @@ func (s *Source) chunkIssueComments(ctx context.Context, repoInfo repoInfo, comm
 			Verify: s.verify,
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case chunksChan <- chunk:
+		if err := reporter.ChunkOk(ctx, chunk); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *Source) processPRs(ctx context.Context, repoInfo repoInfo, chunksChan chan *sources.Chunk) error {
+func (s *Source) processPRs(ctx context.Context, repoInfo repoInfo, reporter sources.ChunkReporter) error {
 	prOpts := &github.PullRequestListOptions{
 		Sort:      sortType,
 		Direction: directionType,
@@ -1286,7 +1345,7 @@ func (s *Source) processPRs(ctx context.Context, repoInfo repoInfo, chunksChan c
 			return err
 		}
 
-		if err = s.chunkPullRequests(ctx, repoInfo, prs, chunksChan); err != nil {
+		if err = s.chunkPullRequests(ctx, repoInfo, prs, reporter); err != nil {
 			return err
 		}
 
@@ -1299,7 +1358,7 @@ func (s *Source) processPRs(ctx context.Context, repoInfo repoInfo, chunksChan c
 	return nil
 }
 
-func (s *Source) processPRComments(ctx context.Context, repoInfo repoInfo, chunksChan chan *sources.Chunk) error {
+func (s *Source) processPRComments(ctx context.Context, repoInfo repoInfo, reporter sources.ChunkReporter, cutoffTime *time.Time) error {
 	prOpts := &github.PullRequestListCommentsOptions{
 		Sort:      sortType,
 		Direction: directionType,
@@ -1318,7 +1377,7 @@ func (s *Source) processPRComments(ctx context.Context, repoInfo repoInfo, chunk
 			return err
 		}
 
-		if err = s.chunkPullRequestComments(ctx, repoInfo, prComments, chunksChan); err != nil {
+		if err = s.chunkPullRequestComments(ctx, repoInfo, prComments, reporter, cutoffTime); err != nil {
 			return err
 		}
 
@@ -1331,10 +1390,10 @@ func (s *Source) processPRComments(ctx context.Context, repoInfo repoInfo, chunk
 	return nil
 }
 
-func (s *Source) chunkPullRequests(ctx context.Context, repoInfo repoInfo, prs []*github.PullRequest, chunksChan chan *sources.Chunk) error {
+func (s *Source) chunkPullRequests(ctx context.Context, repoInfo repoInfo, prs []*github.PullRequest, reporter sources.ChunkReporter) error {
 	for _, pr := range prs {
 		// Create chunk and send it to the channel.
-		chunk := &sources.Chunk{
+		chunk := sources.Chunk{
 			SourceName: s.name,
 			SourceID:   s.SourceID(),
 			SourceType: s.Type(),
@@ -1355,23 +1414,26 @@ func (s *Source) chunkPullRequests(ctx context.Context, repoInfo repoInfo, prs [
 			Verify: s.verify,
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case chunksChan <- chunk:
+		if err := reporter.ChunkOk(ctx, chunk); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *Source) chunkPullRequestComments(ctx context.Context, repoInfo repoInfo, comments []*github.PullRequestComment, chunksChan chan *sources.Chunk) error {
+func (s *Source) chunkPullRequestComments(ctx context.Context, repoInfo repoInfo, comments []*github.PullRequestComment, reporter sources.ChunkReporter, cutoffTime *time.Time) error {
 	for _, comment := range comments {
+		// Stop processing comments as soon as one created before the cutoff time is detected, as these are sorted
+		if cutoffTime != nil && comment.GetUpdatedAt().Before(*cutoffTime) {
+			continue
+		}
+
 		// Create chunk and send it to the channel.
-		chunk := &sources.Chunk{
+		chunk := sources.Chunk{
 			SourceName: s.name,
 			SourceID:   s.SourceID(),
-			SourceType: s.Type(),
 			JobID:      s.JobID(),
+			SourceType: s.Type(),
 			SourceMetadata: &source_metadatapb.MetaData{
 				Data: &source_metadatapb.MetaData_Github{
 					Github: &source_metadatapb.Github{
@@ -1388,19 +1450,17 @@ func (s *Source) chunkPullRequestComments(ctx context.Context, repoInfo repoInfo
 			Verify: s.verify,
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case chunksChan <- chunk:
+		if err := reporter.ChunkOk(ctx, chunk); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *Source) scanTargets(ctx context.Context, targets []sources.ChunkingTarget, chunksChan chan *sources.Chunk) []error {
+func (s *Source) scanTargets(ctx context.Context, targets []sources.ChunkingTarget, reporter sources.ChunkReporter) []error {
 	var errs []error
 	for _, tgt := range targets {
-		if err := s.scanTarget(ctx, tgt, chunksChan); err != nil {
+		if err := s.scanTarget(ctx, tgt, reporter); err != nil {
 			ctx.Logger().Error(err, "error scanning target")
 			errs = append(errs, &sources.TargetedScanError{Err: err, SecretID: tgt.SecretID})
 		}
@@ -1409,7 +1469,7 @@ func (s *Source) scanTargets(ctx context.Context, targets []sources.ChunkingTarg
 	return errs
 }
 
-func (s *Source) scanTarget(ctx context.Context, target sources.ChunkingTarget, chunksChan chan *sources.Chunk) error {
+func (s *Source) scanTarget(ctx context.Context, target sources.ChunkingTarget, reporter sources.ChunkReporter) error {
 	metaType, ok := target.QueryCriteria.GetData().(*source_metadatapb.MetaData_Github)
 	if !ok {
 		return fmt.Errorf("unable to cast metadata type for targeted scan")
@@ -1446,7 +1506,6 @@ func (s *Source) scanTarget(ctx context.Context, target sources.ChunkingTarget, 
 		return fmt.Errorf("unexpected HTTP response status when trying to download file for scan: %v", resp.Status)
 	}
 
-	reporter := sources.ChanReporter{Ch: chunksChan}
 	chunkSkel := sources.Chunk{
 		SourceType: s.Type(),
 		SourceName: s.name,
@@ -1456,6 +1515,20 @@ func (s *Source) scanTarget(ctx context.Context, target sources.ChunkingTarget, 
 		SourceMetadata: &source_metadatapb.MetaData{
 			Data: &source_metadatapb.MetaData_Github{Github: meta},
 		},
-		Verify: s.verify}
-	return handlers.HandleFile(ctx, readCloser, &chunkSkel, reporter)
+		Verify: s.verify,
+	}
+	fileCtx := context.WithValues(ctx, "path", meta.GetFile())
+	return handlers.HandleFile(fileCtx, readCloser, &chunkSkel, reporter)
+}
+
+func (s *Source) ChunkUnit(ctx context.Context, unit sources.SourceUnit, reporter sources.ChunkReporter) error {
+	repoURL, _ := unit.SourceUnitID()
+	ctx = context.WithValue(ctx, "repo", repoURL)
+	// ChunkUnit is not guaranteed to be called from Enumerate, so we must
+	// check and fetch the repoInfoCache for this repo.
+	repoURL, err := s.ensureRepoInfoCache(ctx, repoURL)
+	if err != nil {
+		return err
+	}
+	return s.scanRepo(ctx, repoURL, reporter)
 }

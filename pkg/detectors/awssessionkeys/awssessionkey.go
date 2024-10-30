@@ -86,8 +86,10 @@ func GetHMAC(key []byte, data []byte) []byte {
 	return hasher.Sum(nil)
 }
 
+// Reference: https://nitter.poast.org/TalBeerySec/status/1816449053841838223#m
 func checkSessionToken(sessionToken string, secret string) bool {
-	if !strings.Contains(sessionToken, "YXdz") || strings.Contains(sessionToken, secret) {
+	if !(strings.Contains(sessionToken, "YXdz") || strings.Contains(sessionToken, "Jb3JpZ2luX2Vj")) ||
+		strings.Contains(sessionToken, secret) {
 		// Handle error if the sessionToken is not a valid base64 string
 		return false
 	}
@@ -339,4 +341,8 @@ type identityRes struct {
 
 func (s scanner) Type() detectorspb.DetectorType {
 	return detectorspb.DetectorType_AWSSessionKey
+}
+
+func (s scanner) Description() string {
+	return "AWS (Amazon Web Services) is a comprehensive cloud computing platform offering a wide range of on-demand services like computing power, storage, databases. API keys for AWS can have varying amount of access to these services depending on the IAM policy attached. AWS Session Tokens are short-lived keys."
 }

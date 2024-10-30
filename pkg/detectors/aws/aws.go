@@ -456,3 +456,7 @@ type identityRes struct {
 func (s scanner) Type() detectorspb.DetectorType {
 	return detectorspb.DetectorType_AWS
 }
+
+func (s scanner) Description() string {
+	return "AWS (Amazon Web Services) is a comprehensive cloud computing platform offering a wide range of on-demand services like computing power, storage, databases. API keys for AWS can have varying amount of access to these services depending on the IAM policy attached."
+}

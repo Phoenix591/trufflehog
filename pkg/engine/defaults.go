@@ -36,7 +36,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/apify"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/apilayer"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/apimatic"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/apiscience"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/apimetrics"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/apitemplate"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/appcues"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/appfollow"
@@ -90,6 +90,8 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/bombbomb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/boostnote"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/borgbase"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/box"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/boxoauth"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/braintreepayments"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/brandfetch"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/browserstack"
@@ -111,7 +113,8 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/campayn"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/cannyio"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/capsulecrm"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/captaindata"
+	captainDataV1 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/captaindata/v1"
+	captainDataV2 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/captaindata/v2"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/carboninterface"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/cashboard"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/caspio"
@@ -428,6 +431,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/meaningcloud"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/mediastack"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/meistertask"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/meraki"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/mesibo"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/messagebird"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/metaapi"
@@ -556,6 +560,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/qualaroo"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/qubole"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rabbitmq"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/railwayapp"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/ramp"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rapidapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rawg"
@@ -587,6 +592,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rownd"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rubygems"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/runrunit"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/saladcloudapikey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/salesblink"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/salescookie"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/salesflare"
@@ -805,7 +811,7 @@ import (
 )
 
 func DefaultDetectors() []detectors.Detector {
-	return []detectors.Detector{
+	detectorList := []detectors.Detector{
 		&heroku.Scanner{},
 		&pypi.Scanner{},
 		&linearapi.Scanner{},
@@ -1363,7 +1369,6 @@ func DefaultDetectors() []detectors.Detector {
 		livestorm.Scanner{},
 		// manifest.Scanner{},
 		formbucket.Scanner{},
-		apiscience.Scanner{},
 		dronahq.Scanner{},
 		webscraper.Scanner{},
 		versioneye.Scanner{},
@@ -1408,7 +1413,6 @@ func DefaultDetectors() []detectors.Detector {
 		checklyhq.Scanner{},
 		teamworkspaces.Scanner{},
 		cloudelements.Scanner{},
-		captaindata.Scanner{},
 		uploadcare.Scanner{},
 		moderation.Scanner{},
 		myintervals.Scanner{},
@@ -1630,9 +1634,34 @@ func DefaultDetectors() []detectors.Detector {
 		atlassianv1.Scanner{},
 		atlassianv2.Scanner{},
 		netsuite.Scanner{},
+		box.Scanner{},
 		robinhoodcrypto.Scanner{},
 		nvapi.Scanner{},
+		railwayapp.Scanner{},
+		meraki.Scanner{},
+		saladcloudapikey.Scanner{},
+		boxoauth.Scanner{},
+		apimetrics.Scanner{},
+		captainDataV1.Scanner{},
+		captainDataV2.Scanner{},
 	}
+
+	// Automatically initialize all detectors that implement
+	// EndpointCustomizer and/or CloudProvider interfaces.
+	for _, d := range detectorList {
+		customizer, ok := d.(detectors.EndpointCustomizer)
+		if !ok {
+			continue
+		}
+		// Default to always use the cloud endpoints (if available) and the found endpoints.
+		customizer.UseFoundEndpoints(true)
+		customizer.UseCloudEndpoint(true)
+		if cloudProvider, ok := d.(detectors.CloudProvider); ok {
+			customizer.SetCloudEndpoint(cloudProvider.CloudEndpoint())
+		}
+	}
+
+	return detectorList
 }
 
 func DefaultDetectorTypesImplementing[T any]() map[detectorspb.DetectorType]struct{} {

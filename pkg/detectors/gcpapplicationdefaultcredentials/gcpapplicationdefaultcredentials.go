@@ -79,6 +79,8 @@ func (s Scanner) FromData(ctx context.Context, verify bool, data []byte) (result
 		s1 := detectors.Result{
 			DetectorType: detectorspb.DetectorType_GCPApplicationDefaultCredentials,
 			Raw:          []byte(detectedClientID),
+			RawV2:        []byte(detectedClientID + creds.RefreshToken),
+			Redacted:     creds.RefreshToken[:3] + "..." + creds.RefreshToken[min(len(creds.RefreshToken)-1, 47):], // censor the refresh token
 		}
 
 		if verify {
@@ -169,4 +171,8 @@ func verifyMatch(ctx context.Context, client *http.Client, token string) (bool, 
 
 func (s Scanner) Type() detectorspb.DetectorType {
 	return detectorspb.DetectorType_GCPApplicationDefaultCredentials
+}
+
+func (s Scanner) Description() string {
+	return "GCP Application Default Credentials are used to authenticate and authorize API requests to Google Cloud services."
 }
