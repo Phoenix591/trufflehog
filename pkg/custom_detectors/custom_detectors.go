@@ -32,6 +32,7 @@ type CustomRegexWebhook struct {
 // Ensure the Scanner satisfies the interface at compile time.
 var _ detectors.Detector = (*CustomRegexWebhook)(nil)
 var _ detectors.CustomFalsePositiveChecker = (*CustomRegexWebhook)(nil)
+var _ detectors.MaxSecretSizeProvider = (*CustomRegexWebhook)(nil)
 
 // NewWebhookCustomRegex initializes and validates a CustomRegexWebhook. An
 // unexported type is intentionally returned here to ensure the values have
@@ -115,6 +116,11 @@ func (c *CustomRegexWebhook) IsFalsePositive(_ detectors.Result) (bool, string) 
 	return false, ""
 }
 
+// custom max size for custom detector
+func (c *CustomRegexWebhook) MaxSecretSize() int64 {
+	return 1000
+}
+
 func (c *CustomRegexWebhook) createResults(ctx context.Context, match map[string][]string, verify bool, results chan<- detectors.Result) error {
 	if common.IsDone(ctx) {
 		// TODO: Log we're possibly leaving out results.
@@ -123,7 +129,11 @@ func (c *CustomRegexWebhook) createResults(ctx context.Context, match map[string
 	var raw string
 	for _, values := range match {
 		// values[0] contains the entire regex match.
-		raw += values[0]
+		secret := values[0]
+		if len(values) > 1 {
+			secret = values[1]
+		}
+		raw += secret
 	}
 	result := detectors.Result{
 		DetectorType: detectorspb.DetectorType_CustomRegex,

@@ -87,7 +87,6 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/bitmex"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/blazemeter"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/blitapp"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/blocknative"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/blogger"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/bombbomb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/boostnote"
@@ -583,7 +582,6 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/replicate"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/replyio"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/requestfinance"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/restpack"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/restpackhtmltopdfapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/restpackscreenshotapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/revampcrm"
@@ -592,7 +590,6 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/roaring"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/robinhoodcrypto"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rocketreach"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rockset"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/roninapp"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/route4me"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/rownd"
@@ -604,6 +601,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/salesflare"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/salesforce"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/salesmate"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sanity"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/satismeterprojectkey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/satismeterwritekey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/saucelabs"
@@ -627,7 +625,8 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sendbirdorganizationapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sendgrid"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sendinbluev2"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sentrytoken"
+	sentrytokenv1 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sentrytoken/v1"
+	sentrytokenv2 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sentrytoken/v2"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/serphouse"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/serpstack"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sheety"
@@ -737,6 +736,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/trufflehogenterprise"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twelvedata"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twilio"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twilioapikey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twist"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twitch"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/twitchaccesstoken"
@@ -915,7 +915,7 @@ func buildDetectorList() []detectors.Detector {
 		&bitmex.Scanner{},
 		&blazemeter.Scanner{},
 		&blitapp.Scanner{},
-		&blocknative.Scanner{},
+		// &blocknative.Scanner{}, // temporary disabled due to API issue
 		&blogger.Scanner{},
 		&bombbomb.Scanner{},
 		&boostnote.Scanner{},
@@ -1425,7 +1425,7 @@ func buildDetectorList() []detectors.Detector {
 		&replicate.Scanner{},
 		&replyio.Scanner{},
 		&requestfinance.Scanner{},
-		&restpack.Scanner{},
+		// &restpack.Scanner{},
 		&restpackhtmltopdfapi.Scanner{},
 		&restpackscreenshotapi.Scanner{},
 		&revampcrm.Scanner{},
@@ -1434,7 +1434,7 @@ func buildDetectorList() []detectors.Detector {
 		&roaring.Scanner{},
 		&robinhoodcrypto.Scanner{},
 		&rocketreach.Scanner{},
-		&rockset.Scanner{},
+		// &rockset.Scanner{},
 		&roninapp.Scanner{},
 		&route4me.Scanner{},
 		&rownd.Scanner{},
@@ -1446,6 +1446,7 @@ func buildDetectorList() []detectors.Detector {
 		&salesflare.Scanner{},
 		&salesforce.Scanner{},
 		&salesmate.Scanner{},
+		&sanity.Scanner{},
 		&satismeterprojectkey.Scanner{},
 		&satismeterwritekey.Scanner{},
 		&saucelabs.Scanner{},
@@ -1469,7 +1470,8 @@ func buildDetectorList() []detectors.Detector {
 		&sendbirdorganizationapi.Scanner{},
 		&sendgrid.Scanner{},
 		&sendinbluev2.Scanner{},
-		&sentrytoken.Scanner{},
+		&sentrytokenv1.Scanner{},
+		&sentrytokenv2.Scanner{},
 		&serphouse.Scanner{},
 		&serpstack.Scanner{},
 		&sheety.Scanner{},
@@ -1582,6 +1584,7 @@ func buildDetectorList() []detectors.Detector {
 		&trufflehogenterprise.Scanner{},
 		&twelvedata.Scanner{},
 		&twilio.Scanner{},
+		&twilioapikey.Scanner{},
 		&twist.Scanner{},
 		&twitch.Scanner{},
 		&twitchaccesstoken.Scanner{},

@@ -1,3 +1,6 @@
+//go:build detectors
+// +build detectors
+
 package opsgenie
 
 import (
@@ -7,9 +10,9 @@ import (
 	"time"
 
 	"github.com/kylelemons/godebug/pretty"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detectorspb"
 )
 
@@ -47,6 +50,10 @@ func TestOpsgenie_FromChunk(t *testing.T) {
 				{
 					DetectorType: detectorspb.DetectorType_Opsgenie,
 					Verified:     true,
+					ExtraData: map[string]string{
+						"account": "secretdetectors",
+						"plan":    "Free",
+					},
 				},
 			},
 			wantErr: false,

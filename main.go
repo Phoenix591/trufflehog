@@ -20,6 +20,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/jpillora/overseer"
 	"github.com/mattn/go-isatty"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/cache/simple"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/verificationcache"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/analyzer"
@@ -68,12 +71,15 @@ var (
 	fail                 = cli.Flag("fail", "Exit with code 183 if results are found.").Bool()
 	verifiers            = cli.Flag("verifier", "Set custom verification endpoints.").StringMap()
 	customVerifiersOnly  = cli.Flag("custom-verifiers-only", "Only use custom verification endpoints.").Bool()
+	detectorTimeout      = cli.Flag("detector-timeout", "Maximum time to spend scanning chunks per detector (e.g., 30s).").Duration()
 	archiveMaxSize       = cli.Flag("archive-max-size", "Maximum size of archive to scan. (Byte units eg. 512B, 2KB, 4MB)").Bytes()
 	archiveMaxDepth      = cli.Flag("archive-max-depth", "Maximum depth of archive to scan.").Int()
 	archiveTimeout       = cli.Flag("archive-timeout", "Maximum time to spend extracting an archive.").Duration()
 	includeDetectors     = cli.Flag("include-detectors", "Comma separated list of detector types to include. Protobuf name or IDs may be used, as well as ranges.").Default("all").String()
 	excludeDetectors     = cli.Flag("exclude-detectors", "Comma separated list of detector types to exclude. Protobuf name or IDs may be used, as well as ranges. IDs defined here take precedence over the include list.").String()
 	jobReportFile        = cli.Flag("output-report", "Write a scan report to the provided path.").Hidden().OpenFile(os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+
+	noVerificationCache = cli.Flag("no-verification-cache", "Disable verification caching").Bool()
 
 	// Add feature flags
 	forceSkipBinaries  = cli.Flag("force-skip-binaries", "Force skipping binaries.").Bool()
@@ -439,6 +445,9 @@ func run(state overseer.State) {
 		}
 	}
 
+	if *detectorTimeout != 0 {
+		engine.SetDetectorTimeout(*detectorTimeout)
+	}
 	if *archiveMaxSize != 0 {
 		handlers.SetArchiveMaxSize(int(*archiveMaxSize))
 	}
@@ -476,25 +485,32 @@ func run(state overseer.State) {
 		logFatal(err, "failed to configure results flag")
 	}
 
+	verificationCacheMetrics := verificationcache.InMemoryMetrics{}
+
 	engConf := engine.Config{
 		Concurrency: *concurrency,
 		// The engine must always be configured with the list of
 		// default detectors, which can be further filtered by the
 		// user. The filters are applied by the engine and are only
 		// subtractive.
-		Detectors:             append(defaults.DefaultDetectors(), conf.Detectors...),
-		Verify:                !*noVerification,
-		IncludeDetectors:      *includeDetectors,
-		ExcludeDetectors:      *excludeDetectors,
-		CustomVerifiersOnly:   *customVerifiersOnly,
-		VerifierEndpoints:     *verifiers,
-		Dispatcher:            engine.NewPrinterDispatcher(printer),
-		FilterUnverified:      *filterUnverified,
-		FilterEntropy:         *filterEntropy,
-		VerificationOverlap:   *allowVerificationOverlap,
-		Results:               parsedResults,
-		PrintAvgDetectorTime:  *printAvgDetectorTime,
-		ShouldScanEntireChunk: *scanEntireChunk,
+		Detectors:                append(defaults.DefaultDetectors(), conf.Detectors...),
+		Verify:                   !*noVerification,
+		IncludeDetectors:         *includeDetectors,
+		ExcludeDetectors:         *excludeDetectors,
+		CustomVerifiersOnly:      *customVerifiersOnly,
+		VerifierEndpoints:        *verifiers,
+		Dispatcher:               engine.NewPrinterDispatcher(printer),
+		FilterUnverified:         *filterUnverified,
+		FilterEntropy:            *filterEntropy,
+		VerificationOverlap:      *allowVerificationOverlap,
+		Results:                  parsedResults,
+		PrintAvgDetectorTime:     *printAvgDetectorTime,
+		ShouldScanEntireChunk:    *scanEntireChunk,
+		VerificationCacheMetrics: &verificationCacheMetrics,
+	}
+
+	if !*noVerificationCache {
+		engConf.VerificationResultCache = simple.NewCache[detectors.Result]()
 	}
 
 	if *compareDetectionStrategies {
@@ -514,6 +530,20 @@ func run(state overseer.State) {
 			logFatal(err, "error running scan")
 		}
 
+		verificationCacheMetrics := struct {
+			Hits                    int32
+			Misses                  int32
+			HitsWasted              int32
+			AttemptsSaved           int32
+			VerificationTimeSpentMS int64
+		}{
+			Hits:                    verificationCacheMetrics.ResultCacheHits.Load(),
+			Misses:                  verificationCacheMetrics.ResultCacheMisses.Load(),
+			HitsWasted:              verificationCacheMetrics.ResultCacheHitsWasted.Load(),
+			AttemptsSaved:           verificationCacheMetrics.CredentialVerificationsSaved.Load(),
+			VerificationTimeSpentMS: verificationCacheMetrics.FromDataVerifyTimeSpentMS.Load(),
+		}
+
 		// Print results.
 		logger.Info("finished scanning",
 			"chunks", metrics.ChunksScanned,
@@ -522,6 +552,7 @@ func run(state overseer.State) {
 			"unverified_secrets", metrics.UnverifiedSecretsFound,
 			"scan_duration", metrics.ScanDuration.String(),
 			"trufflehog_version", version.BuildVersion,
+			"verification_caching", verificationCacheMetrics,
 		)
 
 		if metrics.hasFoundResults && *fail {
