@@ -10,15 +10,16 @@ env:
 
 on:
   push:
-    tags: 
-    - '*'
+    tags:
+      - '*'
 
-  
 
 jobs:
 
   vendor-tarball:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
     - uses: actions/checkout@v4
       with:
@@ -40,10 +41,13 @@ jobs:
          tar ${{ env.TAR_REPRO_OPTS }}  -caf ${{ env.TAR_NAME }}
          ${{ env.CHECKOUT_DIR }}/vendor
 
+
     - name: release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: ${{ env.TAR_NAME }}
-        body: Go vendor tarball for Gentoo Linux overlay package
-        generate_release_notes: false
-        fail_on_unmatched_files: true
+      run: |
+            gh release create ${{ github.ref_name }} \
+                --title "${{ github.ref_name }}" \
+                --notes "Go vendor tarball for Gentoo Linux overlay package" \
+                ../${{ env.TAR_NAME }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      working-directory: ${{ env.CHECKOUT_DIR }}
