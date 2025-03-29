@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
+	"golang.org/x/time/rate"
+
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/source_metadatapb"
 )
 
@@ -41,12 +44,12 @@ type IDNameUUID struct {
 }
 
 type KeyValue struct {
-	Key          string      `json:"key"`
-	Value        interface{} `json:"value"`
-	Enabled      bool        `json:"enabled,omitempty"`
-	Type         string      `json:"type,omitempty"`
-	SessionValue string      `json:"sessionValue,omitempty"`
-	Id           string      `json:"id,omitempty"`
+	Key          string `json:"key"`
+	Value        any    `json:"value"`
+	Enabled      bool   `json:"enabled,omitempty"`
+	Type         string `json:"type,omitempty"`
+	SessionValue string `json:"sessionValue,omitempty"`
+	Id           string `json:"id,omitempty"`
 }
 
 type VariableData struct {
@@ -133,12 +136,14 @@ type Script struct {
 }
 
 type Request struct {
-	Auth        Auth       `json:"auth,omitempty"`
-	Method      string     `json:"method"`
-	Header      []KeyValue `json:"header,omitempty"`
-	Body        Body       `json:"body,omitempty"` //Need to update with additional options
-	URL         URL        `json:"url"`
-	Description string     `json:"description,omitempty"`
+	Auth           Auth            `json:"auth,omitempty"`
+	Method         string          `json:"method"`
+	HeaderRaw      json.RawMessage `json:"header,omitempty"`
+	HeaderKeyValue []KeyValue
+	HeaderString   []string
+	Body           Body   `json:"body,omitempty"` //Need to update with additional options
+	URL            URL    `json:"url"`
+	Description    string `json:"description,omitempty"`
 }
 
 type Body struct {
@@ -168,12 +173,14 @@ type URL struct {
 }
 
 type Response struct {
-	ID              string     `json:"id"`
-	Name            string     `json:"name,omitempty"`
-	OriginalRequest Request    `json:"originalRequest,omitempty"`
-	Header          []KeyValue `json:"header,omitempty"`
-	Body            string     `json:"body,omitempty"`
-	UID             string     `json:"uid,omitempty"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name,omitempty"`
+	OriginalRequest Request         `json:"originalRequest,omitempty"`
+	HeaderRaw       json.RawMessage `json:"header,omitempty"`
+	HeaderKeyValue  []KeyValue
+	HeaderString    []string
+	Body            string `json:"body,omitempty"`
+	UID             string `json:"uid,omitempty"`
 }
 
 // A Client manages communication with the Postman API.
@@ -183,6 +190,13 @@ type Client struct {
 
 	// Headers to attach to every requests made with the client.
 	Headers map[string]string
+
+	// Rate limiter needed for Postman API workspace and collection requests. Postman API rate limit
+	// is 10 calls in 10 seconds for GET /collections, GET /workspaces, and GET /workspaces/{id} endpoints.
+	WorkspaceAndCollectionRateLimiter *rate.Limiter
+
+	// Rate limiter needed for Postman API. General rate limit is 300 requests per minute.
+	GeneralRateLimiter *rate.Limiter
 }
 
 // NewClient returns a new Postman API client.
@@ -194,8 +208,10 @@ func NewClient(postmanToken string) *Client {
 	}
 
 	c := &Client{
-		HTTPClient: http.DefaultClient,
-		Headers:    bh,
+		HTTPClient:                        http.DefaultClient,
+		Headers:                           bh,
+		WorkspaceAndCollectionRateLimiter: rate.NewLimiter(rate.Every(time.Second), 1),
+		GeneralRateLimiter:                rate.NewLimiter(rate.Every(time.Second/5), 1),
 	}
 
 	return c
@@ -249,111 +265,143 @@ func (c *Client) getPostmanReq(url string, headers map[string]string) (*http.Res
 
 // EnumerateWorkspaces returns the workspaces for a given user (both private, public, team and personal).
 // Consider adding additional flags to support filtering.
-func (c *Client) EnumerateWorkspaces() ([]Workspace, error) {
-	var workspaces []Workspace
+func (c *Client) EnumerateWorkspaces(ctx context.Context) ([]Workspace, error) {
+	ctx.Logger().V(2).Info("enumerating workspaces")
 	workspacesObj := struct {
 		Workspaces []Workspace `json:"workspaces"`
 	}{}
 
 	r, err := c.getPostmanReq("https://api.getpostman.com/workspaces", nil)
 	if err != nil {
-		err = fmt.Errorf("could not get workspaces")
-		return workspaces, err
+		return nil, fmt.Errorf("could not get workspaces during enumeration: %w", err)
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		err = fmt.Errorf("could not read response body for workspaces")
-		return workspaces, err
+		return nil, fmt.Errorf("could not read response body for workspaces during enumeration: %w", err)
 	}
 	r.Body.Close()
 
 	if err := json.Unmarshal([]byte(body), &workspacesObj); err != nil {
-		err = fmt.Errorf("could not unmarshal workspaces JSON")
-		return workspaces, err
+		return nil, fmt.Errorf("could not unmarshal workspaces JSON during enumeration: %w", err)
+	}
+
+	for i, workspace := range workspacesObj.Workspaces {
+		tempWorkspace, err := c.GetWorkspace(ctx, workspace.ID)
+		if err != nil {
+			return nil, fmt.Errorf("could not get workspace %q (%s) during enumeration: %w", workspace.Name, workspace.ID, err)
+		}
+		workspacesObj.Workspaces[i] = tempWorkspace
+
+		ctx.Logger().V(3).Info("individual workspace getting added to the slice", "workspace", workspacesObj.Workspaces[i])
 	}
 
 	return workspacesObj.Workspaces, nil
 }
 
 // GetWorkspace returns the workspace for a given workspace
-func (c *Client) GetWorkspace(workspaceUUID string) (Workspace, error) {
-	var workspace Workspace
+func (c *Client) GetWorkspace(ctx context.Context, workspaceUUID string) (Workspace, error) {
+	ctx.Logger().V(2).Info("getting workspace", "workspace", workspaceUUID)
 	obj := struct {
 		Workspace Workspace `json:"workspace"`
 	}{}
 
 	url := fmt.Sprintf(WORKSPACE_URL, workspaceUUID)
+	if err := c.WorkspaceAndCollectionRateLimiter.Wait(ctx); err != nil {
+		return Workspace{}, fmt.Errorf("could not wait for rate limiter during workspace getting: %w", err)
+	}
 	r, err := c.getPostmanReq(url, nil)
 	if err != nil {
-		err = fmt.Errorf("could not get workspace: %s", workspaceUUID)
-		return workspace, err
+		return Workspace{}, fmt.Errorf("could not get workspace (%s): %w", workspaceUUID, err)
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		err = fmt.Errorf("could not read response body for workspace: %s", workspaceUUID)
-		return workspace, err
+		return Workspace{}, fmt.Errorf("could not read response body for workspace (%s): %w", workspaceUUID, err)
 	}
 	r.Body.Close()
 
 	if err := json.Unmarshal([]byte(body), &obj); err != nil {
-		err = fmt.Errorf("could not unmarshal workspace JSON for workspace: %s", workspaceUUID)
-		return workspace, err
+		return Workspace{}, fmt.Errorf("could not unmarshal workspace JSON for workspace (%s): %w", workspaceUUID, err)
 	}
 
 	return obj.Workspace, nil
 }
 
 // GetEnvironmentVariables returns the environment variables for a given environment
-func (c *Client) GetEnvironmentVariables(environment_uuid string) (VariableData, error) {
+func (c *Client) GetEnvironmentVariables(ctx context.Context, environment_uuid string) (VariableData, error) {
 	obj := struct {
 		VariableData VariableData `json:"environment"`
 	}{}
 
 	url := fmt.Sprintf(ENVIRONMENTS_URL, environment_uuid)
+	if err := c.GeneralRateLimiter.Wait(ctx); err != nil {
+		return VariableData{}, fmt.Errorf("could not wait for rate limiter during environment variable getting: %w", err)
+	}
 	r, err := c.getPostmanReq(url, nil)
 	if err != nil {
-		err = fmt.Errorf("could not get env variables for environment: %s", environment_uuid)
-		return VariableData{}, err
+		return VariableData{}, fmt.Errorf("could not get env variables for environment (%s): %w", environment_uuid, err)
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		err = fmt.Errorf("could not read env var response body for environment: %s", environment_uuid)
-		return VariableData{}, err
+		return VariableData{}, fmt.Errorf("could not read env var response body for environment (%s): %w", environment_uuid, err)
 	}
 	r.Body.Close()
 	if err := json.Unmarshal([]byte(body), &obj); err != nil {
-		err = fmt.Errorf("could not unmarshal env variables JSON for environment: %s", environment_uuid)
-		return VariableData{}, err
+		return VariableData{}, fmt.Errorf("could not unmarshal env variables JSON for environment (%s): %w", environment_uuid, err)
 	}
 
 	return obj.VariableData, nil
 }
 
 // GetCollection returns the collection for a given collection
-func (c *Client) GetCollection(collection_uuid string) (Collection, error) {
+func (c *Client) GetCollection(ctx context.Context, collection_uuid string) (Collection, error) {
 	obj := struct {
 		Collection Collection `json:"collection"`
 	}{}
 
 	url := fmt.Sprintf(COLLECTIONS_URL, collection_uuid)
+	if err := c.WorkspaceAndCollectionRateLimiter.Wait(ctx); err != nil {
+		return Collection{}, fmt.Errorf("could not wait for rate limiter during collection getting: %w", err)
+	}
 	r, err := c.getPostmanReq(url, nil)
 	if err != nil {
-		err = fmt.Errorf("could not get collection: %s", collection_uuid)
-		return Collection{}, err
+		return Collection{}, fmt.Errorf("could not get collection (%s): %w", collection_uuid, err)
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		err = fmt.Errorf("could not read response body for collection: %s", collection_uuid)
-		return Collection{}, err
+		return Collection{}, fmt.Errorf("could not read response body for collection (%s): %w", collection_uuid, err)
 	}
 	r.Body.Close()
 	if err := json.Unmarshal([]byte(body), &obj); err != nil {
-		err = fmt.Errorf("could not unmarshal JSON for collection: %s", collection_uuid)
-		return Collection{}, err
+		return Collection{}, fmt.Errorf("could not unmarshal JSON for collection (%s): %w", collection_uuid, err)
+	}
+
+	// Loop used to deal with seeing whether a request/response header is a string or a key value pair
+	for i := range obj.Collection.Items {
+		if obj.Collection.Items[i].Request.HeaderRaw != nil {
+			if err := json.Unmarshal(obj.Collection.Items[i].Request.HeaderRaw, &obj.Collection.Items[i].Request.HeaderKeyValue); err == nil {
+			} else if err := json.Unmarshal(obj.Collection.Items[i].Request.HeaderRaw, &obj.Collection.Items[i].Request.HeaderString); err == nil {
+			} else {
+				return Collection{}, fmt.Errorf("could not unmarshal request header JSON for collection (%s): %w", collection_uuid, err)
+			}
+		}
+
+		for j := range obj.Collection.Items[i].Response {
+			if err := json.Unmarshal(obj.Collection.Items[i].Response[j].OriginalRequest.HeaderRaw, &obj.Collection.Items[i].Response[j].OriginalRequest.HeaderKeyValue); err == nil {
+			} else if err := json.Unmarshal(obj.Collection.Items[i].Response[j].OriginalRequest.HeaderRaw, &obj.Collection.Items[i].Response[j].OriginalRequest.HeaderString); err == nil {
+			} else {
+				return Collection{}, fmt.Errorf("could not unmarshal original request header in response JSON for collection (%s): %w", collection_uuid, err)
+			}
+
+			if err := json.Unmarshal(obj.Collection.Items[i].Response[j].HeaderRaw, &obj.Collection.Items[i].Response[j].HeaderKeyValue); err == nil {
+			} else if err := json.Unmarshal(obj.Collection.Items[i].Response[j].HeaderRaw, &obj.Collection.Items[i].Response[j].HeaderString); err == nil {
+			} else {
+				return Collection{}, fmt.Errorf("could not unmarshal response header JSON for collection (%s): %w", collection_uuid, err)
+			}
+		}
 	}
 
 	return obj.Collection, nil

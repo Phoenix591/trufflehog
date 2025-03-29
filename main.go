@@ -20,16 +20,15 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/jpillora/overseer"
 	"github.com/mattn/go-isatty"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/cache/simple"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
-	"github.com/trufflesecurity/trufflehog/v3/pkg/verificationcache"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/analyzer"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/cache/simple"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/cleantemp"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/common"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/config"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/engine"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/engine/defaults"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/feature"
@@ -39,6 +38,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/tui"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/updater"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/verificationcache"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/version"
 )
 
@@ -57,7 +57,7 @@ var (
 	concurrency         = cli.Flag("concurrency", "Number of concurrent workers.").Default(strconv.Itoa(runtime.NumCPU())).Int()
 	noVerification      = cli.Flag("no-verification", "Don't verify the results.").Bool()
 	onlyVerified        = cli.Flag("only-verified", "Only output verified results.").Hidden().Bool()
-	results             = cli.Flag("results", "Specifies which type(s) of results to output: verified, unknown, unverified, filtered_unverified. Defaults to all types.").String()
+	results             = cli.Flag("results", "Specifies which type(s) of results to output: verified, unknown, unverified, filtered_unverified. Defaults to verified,unverified,unknown.").String()
 
 	allowVerificationOverlap   = cli.Flag("allow-verification-overlap", "Allow verification of similar credentials across detectors").Bool()
 	filterUnverified           = cli.Flag("filter-unverified", "Only output first unverified result per chunk per detector if there are more than one results.").Bool()
@@ -269,15 +269,29 @@ func init() {
 	// Support -h for help
 	cli.HelpFlag.Short('h')
 
+	// Check if the TUI environment variable is set.
+	if ok, err := strconv.ParseBool(os.Getenv("TUI_PARENT")); err == nil {
+		usingTUI = ok
+	}
+
 	if isatty.IsTerminal(os.Stdout.Fd()) && (len(os.Args) <= 1 || os.Args[1] == analyzeCmd.FullCommand()) {
 		args := tui.Run(os.Args[1:])
 		if len(args) == 0 {
 			os.Exit(0)
 		}
 
+		binary, err := exec.LookPath("sh")
+		if err == nil {
+			// On success, this call will never return. On failure, fallthrough
+			// to overwriting os.Args.
+			cmd := strings.Join(append(os.Args[:1], args...), " ")
+			_ = syscall.Exec(binary, []string{"sh", "-c", cmd}, append(os.Environ(), "TUI_PARENT=true"))
+		}
+
 		// Overwrite the Args slice so overseer works properly.
 		os.Args = os.Args[:1]
 		os.Args = append(os.Args, args...)
+
 		usingTUI = true
 	}
 
@@ -446,7 +460,9 @@ func run(state overseer.State) {
 	}
 
 	if *detectorTimeout != 0 {
+		logger.Info("Setting detector timeout", "timeout", detectorTimeout.String())
 		engine.SetDetectorTimeout(*detectorTimeout)
+		detectors.OverrideDetectorTimeout(*detectorTimeout)
 	}
 	if *archiveMaxSize != 0 {
 		handlers.SetArchiveMaxSize(int(*archiveMaxSize))

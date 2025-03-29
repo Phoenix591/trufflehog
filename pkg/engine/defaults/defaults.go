@@ -15,6 +15,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/airship"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/airtableapikey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/airtableoauth"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/airtablepersonalaccesstoken"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/airvisual"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/aiven"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/alchemy"
@@ -73,6 +74,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/azure_storage"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/azurecontainerregistry"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/azuredevopspersonalaccesstoken"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/azuresastoken"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/azuresearchadminkey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/azuresearchquerykey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/bannerbear"
@@ -530,6 +532,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/pipedrive"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/pivotaltracker"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/pixabay"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/plaidkey"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/planetscale"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/planetscaledb"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/planviewleankit"
@@ -627,6 +630,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sendbirdorganizationapi"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sendgrid"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sendinbluev2"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sentryorgtoken"
 	sentrytokenv1 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sentrytoken/v1"
 	sentrytokenv2 "github.com/trufflesecurity/trufflehog/v3/pkg/detectors/sentrytoken/v2"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/serphouse"
@@ -684,6 +688,7 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/stormboard"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/stormglass"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/storyblok"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/storyblokpersonalaccesstoken"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/storychief"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/strava"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors/streak"
@@ -839,6 +844,7 @@ func buildDetectorList() []detectors.Detector {
 		&airship.Scanner{},
 		&airtableapikey.Scanner{},
 		&airtableoauth.Scanner{},
+		&airtablepersonalaccesstoken.Scanner{},
 		&airvisual.Scanner{},
 		&aiven.Scanner{},
 		&alchemy.Scanner{},
@@ -901,6 +907,7 @@ func buildDetectorList() []detectors.Detector {
 		&azuredevopspersonalaccesstoken.Scanner{},
 		// &azurefunctionkey.Scanner{}, // detector is throwing some FPs
 		&azure_openai.Scanner{},
+		&azuresastoken.Scanner{},
 		&azuresearchadminkey.Scanner{},
 		&azuresearchquerykey.Scanner{},
 		&azure_storage.Scanner{},
@@ -1373,7 +1380,7 @@ func buildDetectorList() []detectors.Detector {
 		&pipedrive.Scanner{},
 		&pivotaltracker.Scanner{},
 		&pixabay.Scanner{},
-		// &plaidkey.Scanner{},
+		&plaidkey.Scanner{},
 		&planetscale.Scanner{},
 		&planetscaledb.Scanner{},
 		&planviewleankit.Scanner{},
@@ -1476,6 +1483,7 @@ func buildDetectorList() []detectors.Detector {
 		&sendinbluev2.Scanner{},
 		&sentrytokenv1.Scanner{},
 		&sentrytokenv2.Scanner{},
+		&sentryorgtoken.Scanner{},
 		&serphouse.Scanner{},
 		&serpstack.Scanner{},
 		&sheety.Scanner{},
@@ -1533,6 +1541,7 @@ func buildDetectorList() []detectors.Detector {
 		&stormboard.Scanner{},
 		&stormglass.Scanner{},
 		&storyblok.Scanner{},
+		&storyblokpersonalaccesstoken.Scanner{},
 		&storychief.Scanner{},
 		&strava.Scanner{},
 		&streak.Scanner{},
