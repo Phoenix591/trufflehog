@@ -97,7 +97,7 @@ repos:
         description: Detect secrets in your data.
         entry: bash -c 'trufflehog git file://. --since-commit HEAD --results=verified,unknown --fail'
         language: system
-        stages: ["commit", "push"]
+        stages: ["pre-commit", "pre-push"]
 ```
 
 2. Install the pre-commit hook:
@@ -159,6 +159,24 @@ In rare cases, you may need to bypass pre-commit hooks:
 ```bash
 git commit --no-verify -m "Your commit message"
 ```
+
+### Running in Audit Mode
+
+You can run the TruffleHog pre-commit hook in an "audit" or "non-enforcement" mode to test the git hook with the following commands:
+
+Local Binary Version:
+```bash
+trufflehog git file://. --since-commit HEAD --results=verified,unknown 2>/dev/null
+```
+
+Docker Container Version:
+```bash
+docker run --rm -v "$(pwd):/workdir" -i --rm trufflesecurity/trufflehog:latest git file:///workdir --since-commit HEAD --results=verified,unknown 2>/dev/null
+```
+
+This change does two things: (1) removes the `--fail` flag, which means the pre-commit hook will *always* pass, (2) suppresses `stderr` output, so only verified secrets are printed to the terminal output.
+
+**For users of the Pre-Commit Framework: add the `verbose: true` flag during audit mode; otherwise, the hook will pass, and you won't see any secrets.**
 
 ## Troubleshooting
 

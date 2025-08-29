@@ -44,6 +44,7 @@ type (
 	Binding struct {
 		Resource   Resource
 		Permission Permission
+		Condition  string
 	}
 )
 
@@ -94,6 +95,16 @@ const (
 	AnalyzerTypeLaunchDarkly
 	AnalyzerTypeFigma
 	AnalyzerTypePlaid
+	AnalyzerTypeNetlify
+	AnalyzerTypeFastly
+	AnalyzerTypeMonday
+	AnalyzerTypeDatadog
+	AnalyzerTypeNgrok
+	AnalyzerTypeMux
+	AnalyzerTypePosthog
+	AnalyzerTypeDropbox
+	AnalyzerTypeDataBricks
+	AnalyzerTypeJira
 	// Add new items here with AnalyzerType prefix
 )
 
@@ -133,6 +144,16 @@ var analyzerTypeStrings = map[AnalyzerType]string{
 	AnalyzerTypeLaunchDarkly:  "LaunchDarkly",
 	AnalyzerTypeFigma:         "Figma",
 	AnalyzerTypePlaid:         "Plaid",
+	AnalyzerTypeNetlify:       "Netlify",
+	AnalyzerTypeFastly:        "Fastly",
+	AnalyzerTypeMonday:        "Monday",
+	AnalyzerTypeDatadog:       "Datadog",
+	AnalyzerTypeNgrok:         "Ngrok",
+	AnalyzerTypeMux:           "Mux",
+	AnalyzerTypePosthog:       "Posthog",
+	AnalyzerTypeDropbox:       "Dropbox",
+	AnalyzerTypeDataBricks:    "DataBricks",
+	AnalyzerTypeJira:          "Jira",
 	// Add new mappings here
 }
 
@@ -144,7 +165,7 @@ func (a AnalyzerType) String() string {
 	return "Unknown"
 }
 
-// GetSortedAnalyzerTypes returns a sorted slice of AnalyzerType strings, skipping "Invalid".
+// AvailableAnalyzers returns a sorted slice of AnalyzerType strings, skipping "Invalid".
 func AvailableAnalyzers() []string {
 	var analyzerStrings []string
 

@@ -2,19 +2,12 @@ package smartsheets
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/engine/ahocorasick"
-)
-
-var (
-	validPattern   = "MVE7zmdxouvunYkowLzaudyX7tvMpkqJ3q52C"
-	invalidPattern = "MVE7?mdxouvunYkowLzaudyX7tvMpkqJ3q52C"
-	keyword        = "smartsheets"
 )
 
 func TestSmartsheets_Pattern(t *testing.T) {
@@ -26,24 +19,74 @@ func TestSmartsheets_Pattern(t *testing.T) {
 		want  []string
 	}{
 		{
-			name:  "valid pattern - with keyword smartsheets",
-			input: fmt.Sprintf("%s token = '%s'", keyword, validPattern),
-			want:  []string{validPattern},
+			name: "valid pattern - with keyword smartsheet and sheet",
+			input: `
+			# do not share these secrets
+			# list all sheets
+			sheets := getsmartsheet("MVE7zmdxouvunYkowLzaudyX7tvMpkqJ3q52C")
+			`,
+			want: []string{"MVE7zmdxouvunYkowLzaudyX7tvMpkqJ3q52C"},
 		},
 		{
-			name:  "valid pattern - ignore duplicate",
-			input: fmt.Sprintf("%s token = '%s' | '%s'", keyword, validPattern, validPattern),
-			want:  []string{validPattern},
+			name: "valid pattern - with prefixRegex sheet",
+			input: `
+			# smartsheet credentials
+			sheet_id := "MVE7zmdxouvunFAKELzaudyX7tvMpkqJ3q52d"
+			`,
+			want: []string{"MVE7zmdxouvunFAKELzaudyX7tvMpkqJ3q52d"},
 		},
 		{
-			name:  "valid pattern - key out of prefix range",
-			input: fmt.Sprintf("%s keyword is not close to the real key in the data\n = '%s'", keyword, validPattern),
-			want:  []string{},
+			name: "valid pattern - ignore duplicate",
+			input: `
+			# smartsheet duplicate credentials
+			sheet_id1 := "MVE7zmdxouvunFAKELzaudyX7tvMpkqJ3q52d"
+			sheet_id2 := "MVE7zmdxouvunFAKELzaudyX7tvMpkqJ3q52d"
+			`,
+			want: []string{"MVE7zmdxouvunFAKELzaudyX7tvMpkqJ3q52d"},
 		},
 		{
-			name:  "invalid pattern",
-			input: fmt.Sprintf("%s = '%s'", keyword, invalidPattern),
-			want:  []string{},
+			name: "valid pattern - key out of prefix range",
+			input: `
+			# below is the smartsheet secret
+			# use this secret to list sheets
+			# do not share this
+
+			sslist := listAll("MVE7zmdxouvunFAKELzaudyX7tvMpkqJ3q52d")
+			`,
+			want: []string{},
+		},
+		{
+			name: "valid pattern - 26 characters",
+			input: `
+			# smartsheet credentials
+			sheet_token := "fakeiq999fakeecyfake3ifake"
+			`,
+			want: []string{"fakeiq999fakeecyfake3ifake"},
+		},
+		{
+			name: "valid pattern - 26 and 37 characters",
+			input: `
+			# smartsheet multiple length credentials
+			sheet_token := "fakeiq999fakeecyfake3ifake"
+			sheet_token2 := "fakezmdxfakenFAKELzhonda7tvMpkqJ3fake"
+			`,
+			want: []string{"fakeiq999fakeecyfake3ifake", "fakezmdxfakenFAKELzhonda7tvMpkqJ3fake"},
+		},
+		{
+			name: "invalid pattern - 30 characters",
+			input: `
+			# smartsheet invalid credentials
+			sheet_token := "fakeiq999fakeecyfake3ifakeuiop"
+			`,
+			want: []string{},
+		},
+		{
+			name: "invalid pattern",
+			input: `
+			# smartsheet secret
+			sheet_id = MVE7?mdxouvunYkowLzaudyX7tvMpkqJ3q52C
+			`,
+			want: []string{},
 		},
 	}
 
